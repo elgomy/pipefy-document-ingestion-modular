@@ -35,7 +35,7 @@ PIPEFY_TOKEN = os.getenv("PIPEFY_TOKEN")
 PIPEFY_WEBHOOK_SECRET = os.getenv("PIPEFY_WEBHOOK_SECRET")
 
 # 🔗 COMUNICACIÓN HTTP DIRECTA - URL del servicio CrewAI
-CREWAI_SERVICE_URL = os.getenv("CREWAI_SERVICE_URL", "http://localhost:8002")
+CREWAI_SERVICE_URL = os.getenv("CREWAI_SERVICE_URL", "https://pipefy-crewai-analysis-modular.onrender.com")
 
 # Cliente Supabase global
 supabase_client: Optional[Client] = None
@@ -477,8 +477,8 @@ async def handle_pipefy_webhook(request: Request, background_tasks: BackgroundTa
                                 "file_url": storage_url,
                                 "document_tag": document_tag
                             })
-                    else:
-                        logger.warning(f"⚠️ Falha ao fazer upload do anexo '{att.name}' para Supabase Storage.")
+                        else:
+                            logger.warning(f"⚠️ Falha ao fazer upload do anexo '{att.name}' para Supabase Storage.")
                 else:
                     logger.warning(f"⚠️ Falha ao baixar o anexo '{att.name}' do Pipefy.")
         
@@ -543,4 +543,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8003) 
+    uvicorn.run(app, host="0.0.0.0", port=8003)
