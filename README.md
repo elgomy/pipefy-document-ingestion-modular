@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 📄 Document Ingestion Service
 
 Servicio modular para ingestión de documentos desde Pipefy hacia Supabase con comunicación HTTP directa.
@@ -40,3 +41,7 @@ Este servicio se comunica con:
 ## 📦 Dependencias
 
 Ver `requirements.txt` para la lista completa de dependencias. 
+=======
+# pipefy-document-ingestion-modular
+ Servicio modular de ingestión de documentos Pipefy-Supabase con comunicación HTTP directa
+>>>>>>> 7f9eb48a7ab55d3b3ddf935a6d974519d33014d4
