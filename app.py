@@ -342,6 +342,7 @@ async def get_checklist_url_from_supabase(config_name: str = "checklist_cadastro
 async def call_crewai_analysis_service(case_id: str, documents: List[Dict], checklist_url: str, pipe_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Llama directamente al servicio CrewAI para análisis de documentos.
+    Procesa la respuesta completa y actualiza Pipefy con el resultado.
     MANTIENE LA MODULARIDAD: Cada servicio mantiene su responsabilidad específica.
     """
     try:
@@ -356,30 +357,67 @@ async def call_crewai_analysis_service(case_id: str, documents: List[Dict], chec
         
         logger.info(f"🔗 Llamando al servicio CrewAI para case_id: {case_id}")
         logger.info(f"📄 Documentos a analizar: {len(documents)}")
-        logger.info(f"🎯 URL CrewAI: {CREWAI_SERVICE_URL}/analyze")
+        logger.info(f"🎯 URL CrewAI: {CREWAI_SERVICE_URL}/analyze/sync")
         
-        # Llamada HTTP directa al servicio CrewAI
-        async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minutos timeout para análisis
+        # Llamada HTTP directa al servicio CrewAI (endpoint síncrono)
+        async with httpx.AsyncClient(timeout=600.0) as client:  # 10 minutos timeout para análisis completo
             response = await client.post(
-                f"{CREWAI_SERVICE_URL}/analyze",
+                f"{CREWAI_SERVICE_URL}/analyze/sync",
                 json=analysis_request.model_dump()
             )
             
             if response.status_code == 200:
                 result = response.json()
                 logger.info(f"✅ Análisis CrewAI completado exitosamente para case_id: {case_id}")
-                return {
-                    "status": "success",
-                    "crewai_response": result,
-                    "communication": "http_direct"
-                }
+                
+                # Procesar resultado completo
+                if result.get("status") == "completed" and "analysis_result" in result:
+                    analysis_result = result["analysis_result"]
+                    summary_report = analysis_result.get("summary_report", "")
+                    
+                    # 1. Guardar análisis en Supabase
+                    logger.info(f"💾 Guardando análisis en Supabase para case_id: {case_id}")
+                    supabase_saved = await save_analysis_to_supabase(result)
+                    
+                    # 2. Actualizar campo en Pipefy con el resumen del análisis
+                    if summary_report:
+                        logger.info(f"📝 Actualizando campo Pipefy para case_id: {case_id}")
+                        # Nota: El field_id puede variar según la configuración del pipe
+                        # Comúnmente puede ser "observacoes_validacao_credito" o similar
+                        pipefy_updated = await update_pipefy_card_field(
+                            card_id=case_id,
+                            field_id="observacoes_validacao_credito",  # Ajustar según el pipe
+                            new_value=summary_report
+                        )
+                        
+                        if pipefy_updated:
+                            logger.info(f"✅ Campo Pipefy actualizado exitosamente para case_id: {case_id}")
+                        else:
+                            logger.warning(f"⚠️ No se pudo actualizar campo Pipefy para case_id: {case_id}")
+                    
+                    return {
+                        "status": "success",
+                        "crewai_response": result,
+                        "supabase_saved": supabase_saved,
+                        "pipefy_updated": pipefy_updated if summary_report else False,
+                        "communication": "http_direct_sync",
+                        "risk_score": analysis_result.get("risk_score"),
+                        "summary_report": summary_report
+                    }
+                else:
+                    logger.warning(f"⚠️ Respuesta CrewAI incompleta para case_id: {case_id}")
+                    return {
+                        "status": "partial_success",
+                        "crewai_response": result,
+                        "communication": "http_direct_sync"
+                    }
             else:
                 logger.error(f"❌ Error en servicio CrewAI: {response.status_code} - {response.text}")
                 return {
                     "status": "error",
                     "error": f"CrewAI service error: {response.status_code}",
                     "details": response.text,
-                    "communication": "http_direct"
+                    "communication": "http_direct_sync"
                 }
                 
     except httpx.TimeoutException:
@@ -387,14 +425,14 @@ async def call_crewai_analysis_service(case_id: str, documents: List[Dict], chec
         return {
             "status": "timeout",
             "error": "CrewAI service timeout",
-            "communication": "http_direct"
+            "communication": "http_direct_sync"
         }
     except Exception as e:
         logger.error(f"❌ Error al llamar al servicio CrewAI: {e}")
         return {
             "status": "error",
             "error": str(e),
-            "communication": "http_direct"
+            "communication": "http_direct_sync"
         }
 
 # --- Endpoint Principal ---
@@ -540,6 +578,126 @@ async def health_check():
         "architecture": "modular_http_direct",
         "communication": "http_direct"
     }
+
+async def update_pipefy_card_field(card_id: str, field_id: str, new_value: str) -> bool:
+    """
+    Actualiza un campo específico de un card en Pipefy.
+    
+    Args:
+        card_id: ID del card a actualizar
+        field_id: ID del campo a actualizar (ej: "observacoes_validacao_credito")
+        new_value: Nuevo valor para el campo
+    
+    Returns:
+        bool: True si la actualización fue exitosa, False en caso contrario
+    """
+    if not PIPEFY_TOKEN:
+        logger.error("ERRO: Token Pipefy não configurado para atualização.")
+        return False
+    
+    mutation = """
+    mutation UpdateCardField($cardId: ID!, $fieldId: String!, $newValue: String!) {
+        updateCardField(input: {
+            card_id: $cardId,
+            field_id: $fieldId,
+            new_value: $newValue
+        }) {
+            success
+            clientMutationId
+        }
+    }
+    """
+    
+    variables = {
+        "cardId": card_id,
+        "fieldId": field_id,
+        "newValue": new_value
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {PIPEFY_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "query": mutation,
+        "variables": variables
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post("https://api.pipefy.com/graphql", json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            if "errors" in data:
+                logger.error(f"ERRO GraphQL ao atualizar campo Pipefy: {data['errors']}")
+                return False
+            
+            result = data.get("data", {}).get("updateCardField", {})
+            success = result.get("success", False)
+            
+            if success:
+                logger.info(f"✅ Campo '{field_id}' atualizado com sucesso no card {card_id}")
+                return True
+            else:
+                logger.error(f"❌ Falha ao atualizar campo '{field_id}' no card {card_id}")
+                return False
+                
+    except Exception as e:
+        logger.error(f"ERRO ao atualizar campo Pipefy para card {card_id}: {e}")
+        return False
+
+async def save_analysis_to_supabase(analysis_result: Dict[str, Any]) -> bool:
+    """
+    Guarda el resultado del análisis en la tabla analysis_results de Supabase.
+    
+    Args:
+        analysis_result: Resultado del análisis de CrewAI
+    
+    Returns:
+        bool: True si se guardó exitosamente, False en caso contrario
+    """
+    if not supabase_client:
+        logger.error("ERRO: Cliente Supabase não inicializado.")
+        return False
+    
+    try:
+        # Extraer datos del resultado del análisis
+        result_data = analysis_result.get("analysis_result", {})
+        
+        # Preparar datos para inserción
+        insert_data = {
+            "case_id": result_data.get("case_id"),
+            "pipe_id": result_data.get("pipe_id"),
+            "status": result_data.get("status"),
+            "message": result_data.get("message"),
+            "risk_score": result_data.get("risk_score"),
+            "risk_score_numeric": result_data.get("risk_score_numeric"),
+            "full_analysis_report": result_data.get("full_analysis_report"),
+            "summary_report": result_data.get("summary_report"),
+            "timestamp": result_data.get("timestamp"),
+            "documents_analyzed": result_data.get("documents_analyzed", 0),
+            "crewai_available": result_data.get("crewai_available", False),
+            "analysis_details": result_data.get("analysis_details")
+        }
+        
+        # Insertar en Supabase
+        def sync_insert():
+            return supabase_client.table("analysis_results").insert(insert_data).execute()
+        
+        result = await asyncio.get_event_loop().run_in_executor(None, sync_insert)
+        
+        if result.data:
+            logger.info(f"✅ Análisis guardado en Supabase para case_id: {insert_data['case_id']}")
+            return True
+        else:
+            logger.error(f"❌ Error al guardar análisis en Supabase: {result}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"ERRO ao salvar análisis en Supabase: {e}")
+        return False
 
 if __name__ == "__main__":
     import uvicorn
