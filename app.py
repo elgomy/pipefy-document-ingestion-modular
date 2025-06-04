@@ -830,8 +830,9 @@ async def update_pipefy_card_field(card_id: str, field_id: str, new_value: str) 
         logger.error("ERRO: Token Pipefy não configurado para atualização.")
         return False
     
+    # Usar mutación más simple y robusta para campos de texto
     mutation = """
-    mutation UpdateCardField($cardId: ID!, $fieldId: String!, $newValue: String!) {
+    mutation UpdateCardField($cardId: ID!, $fieldId: ID!, $newValue: String!) {
         updateCardField(input: {
             card_id: $cardId,
             field_id: $fieldId,
@@ -867,7 +868,10 @@ async def update_pipefy_card_field(card_id: str, field_id: str, new_value: str) 
             
             if "errors" in data:
                 logger.error(f"ERRO GraphQL ao atualizar campo Pipefy: {data['errors']}")
-                return False
+                
+                # Intentar con formato alternativo si falla
+                logger.info("🔄 Intentando con formato alternativo...")
+                return await update_pipefy_card_field_alternative(card_id, field_id, new_value)
             
             result = data.get("data", {}).get("updateCardField", {})
             success = result.get("success", False)
@@ -883,9 +887,66 @@ async def update_pipefy_card_field(card_id: str, field_id: str, new_value: str) 
         logger.error(f"ERRO ao atualizar campo Pipefy para card {card_id}: {e}")
         return False
 
+async def update_pipefy_card_field_alternative(card_id: str, field_id: str, new_value: str) -> bool:
+    """
+    Método alternativo para actualizar campos en Pipefy usando formato de array.
+    """
+    mutation = """
+    mutation UpdateCardField($cardId: ID!, $fieldId: ID!, $newValue: [String!]!) {
+        updateCardField(input: {
+            card_id: $cardId,
+            field_id: $fieldId,
+            new_value: $newValue
+        }) {
+            success
+            clientMutationId
+        }
+    }
+    """
+    
+    variables = {
+        "cardId": card_id,
+        "fieldId": field_id,
+        "newValue": [new_value]
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {PIPEFY_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "query": mutation,
+        "variables": variables
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post("https://api.pipefy.com/graphql", json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            if "errors" in data:
+                logger.error(f"ERRO GraphQL (método alternativo) ao atualizar campo Pipefy: {data['errors']}")
+                return False
+            
+            result = data.get("data", {}).get("updateCardField", {})
+            success = result.get("success", False)
+            
+            if success:
+                logger.info(f"✅ Campo '{field_id}' atualizado com sucesso (método alternativo) no card {card_id}")
+                return True
+            else:
+                logger.error(f"❌ Falha ao atualizar campo '{field_id}' (método alternativo) no card {card_id}")
+                return False
+                
+    except Exception as e:
+        logger.error(f"ERRO (método alternativo) ao atualizar campo Pipefy para card {card_id}: {e}")
+        return False
+
 async def save_analysis_to_supabase(analysis_result: Dict[str, Any]) -> bool:
     """
-    Guarda el resultado del análisis en la tabla analysis_results de Supabase.
+    Guarda el resultado del análisis en la tabla informe_cadastro de Supabase.
     
     Args:
         analysis_result: Resultado del análisis de CrewAI
@@ -901,30 +962,27 @@ async def save_analysis_to_supabase(analysis_result: Dict[str, Any]) -> bool:
         # Extraer datos del resultado del análisis
         result_data = analysis_result.get("analysis_result", {})
         
-        # Preparar datos para inserción
+        # Preparar datos para inserción en tabla informe_cadastro
         insert_data = {
             "case_id": result_data.get("case_id"),
-            "pipe_id": result_data.get("pipe_id"),
-            "status": result_data.get("status"),
-            "message": result_data.get("message"),
-            "risk_score": result_data.get("risk_score"),
-            "risk_score_numeric": result_data.get("risk_score_numeric"),
-            "full_analysis_report": result_data.get("full_analysis_report"),
-            "summary_report": result_data.get("summary_report"),
-            "timestamp": result_data.get("timestamp"),
+            "informe": result_data.get("full_analysis_report", ""),
+            "risk_score": result_data.get("risk_score", "Médio"),
+            "risk_score_numeric": result_data.get("risk_score_numeric", 50),
+            "summary_report": result_data.get("summary_report", ""),
             "documents_analyzed": result_data.get("documents_analyzed", 0),
-            "crewai_available": result_data.get("crewai_available", False),
-            "analysis_details": result_data.get("analysis_details")
+            "crewai_available": result_data.get("crewai_available", True),
+            "analysis_details": result_data.get("analysis_details", {}),
+            "status": "completed"
         }
         
-        # Insertar en Supabase
+        # Insertar en Supabase - tabla correcta: informe_cadastro
         def sync_insert():
-            return supabase_client.table("analysis_results").insert(insert_data).execute()
+            return supabase_client.table("informe_cadastro").insert(insert_data).execute()
         
         result = await asyncio.get_event_loop().run_in_executor(None, sync_insert)
         
         if result.data:
-            logger.info(f"✅ Análisis guardado en Supabase para case_id: {insert_data['case_id']}")
+            logger.info(f"✅ Análisis guardado en Supabase (informe_cadastro) para case_id: {insert_data['case_id']}")
             return True
         else:
             logger.error(f"❌ Error al guardar análisis en Supabase: {result}")
