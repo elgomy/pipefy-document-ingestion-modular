@@ -114,6 +114,139 @@ class CrewAIAnalysisRequest(BaseModel):
     current_date: str
     pipe_id: Optional[str] = None
 
+# 📋 Modelos para Webhook de Supabase
+class SupabaseWebhookPayload(BaseModel):
+    """Modelo para el payload del webhook de Supabase"""
+    type: str  # INSERT, UPDATE, DELETE
+    table: str
+    schema: str
+    record: Optional[Dict[str, Any]] = None
+    old_record: Optional[Dict[str, Any]] = None
+
+# 🔍 Función para detectar automáticamente el field_id de Pipefy
+async def get_pipefy_field_id_for_observacoes(card_id: str) -> Optional[str]:
+    """
+    Detecta automáticamente el field_id del campo 'Observações da Validação Credito' en Pipefy.
+    
+    Args:
+        card_id: ID del card de Pipefy
+    
+    Returns:
+        str: field_id si se encuentra, None en caso contrario
+    """
+    if not PIPEFY_TOKEN:
+        logger.error("ERRO: Token Pipefy não configurado.")
+        return None
+    
+    query = """
+    query GetCardFields($cardId: ID!) {
+        card(id: $cardId) {
+            id
+            fields {
+                field {
+                    id
+                    label
+                    type
+                }
+                name
+                value
+            }
+        }
+    }
+    """
+    
+    variables = {"cardId": card_id}
+    headers = {
+        "Authorization": f"Bearer {PIPEFY_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "query": query,
+        "variables": variables
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post("https://api.pipefy.com/graphql", json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            if "errors" in data:
+                logger.error(f"ERRO GraphQL ao buscar campos: {data['errors']}")
+                return None
+            
+            card_data = data.get("data", {}).get("card")
+            if not card_data:
+                logger.warning(f"Card {card_id} não encontrado.")
+                return None
+            
+            fields = card_data.get("fields", [])
+            
+            # Buscar por nome exato ou palavras-chave
+            target_keywords = [
+                "observações da validação credito",
+                "observacoes da validacao credito", 
+                "observações validação",
+                "observacoes validacao",
+                "validação credito",
+                "validacao credito",
+                "observações",
+                "observacoes"
+            ]
+            
+            for field in fields:
+                field_info = field.get("field", {})
+                field_label = field_info.get("label", "").lower()
+                field_name = field.get("name", "").lower()
+                
+                # Verificar coincidencia exacta o por palabras clave
+                for keyword in target_keywords:
+                    if keyword in field_label or keyword in field_name:
+                        field_id = field_info.get("id")
+                        logger.info(f"✅ Campo encontrado: '{field_info.get('label')}' (ID: {field_id})")
+                        return field_id
+            
+            logger.warning(f"⚠️ Campo 'Observações da Validação Credito' não encontrado no card {card_id}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"ERRO ao buscar field_id para card {card_id}: {e}")
+        return None
+
+# 📝 Función para actualizar campo específico en Pipefy
+async def update_pipefy_observacoes_field(card_id: str, informe_content: str) -> bool:
+    """
+    Actualiza el campo 'Observações da Validação Credito' en Pipefy con el informe.
+    
+    Args:
+        card_id: ID del card de Pipefy
+        informe_content: Contenido del informe a guardar
+    
+    Returns:
+        bool: True si la actualización fue exitosa, False en caso contrario
+    """
+    try:
+        # Detectar automáticamente el field_id
+        field_id = await get_pipefy_field_id_for_observacoes(card_id)
+        if not field_id:
+            logger.error(f"❌ No se pudo encontrar el campo 'Observações da Validação Credito' para card {card_id}")
+            return False
+        
+        # Actualizar el campo
+        success = await update_pipefy_card_field(card_id, field_id, informe_content)
+        
+        if success:
+            logger.info(f"✅ Campo 'Observações da Validação Credito' actualizado en Pipefy para card {card_id}")
+        else:
+            logger.error(f"❌ Error al actualizar campo en Pipefy para card {card_id}")
+        
+        return success
+        
+    except Exception as e:
+        logger.error(f"ERRO ao atualizar campo Pipefy para card {card_id}: {e}")
+        return False
+
 # Funciones auxiliares (iguales al original)
 async def get_pipefy_card_attachments(card_id: str) -> List[PipefyAttachment]:
     """Obtém anexos de um card do Pipefy via GraphQL."""
@@ -384,11 +517,7 @@ async def call_crewai_analysis_service(case_id: str, documents: List[Dict], chec
                         logger.info(f"📝 Actualizando campo Pipefy para case_id: {case_id}")
                         # Nota: El field_id puede variar según la configuración del pipe
                         # Comúnmente puede ser "observacoes_validacao_credito" o similar
-                        pipefy_updated = await update_pipefy_card_field(
-                            card_id=case_id,
-                            field_id="observacoes_validacao_credito",  # Ajustar según el pipe
-                            new_value=summary_report
-                        )
+                        pipefy_updated = await update_pipefy_observacoes_field(case_id, summary_report)
                         
                         if pipefy_updated:
                             logger.info(f"✅ Campo Pipefy actualizado exitosamente para case_id: {case_id}")
@@ -553,6 +682,112 @@ async def handle_pipefy_webhook(request: Request, background_tasks: BackgroundTa
         logger.error(f"❌ ERRO inesperado no webhook: {e}")
         import traceback
         logger.error(f"TRACEBACK: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
+
+# 🔔 WEBHOOK SUPABASE - Endpoint para recibir notificaciones de nuevos informes
+@app.post("/webhook/supabase/informe-created")
+async def handle_supabase_informe_webhook(
+    payload: SupabaseWebhookPayload,
+    background_tasks: BackgroundTasks,
+    request: Request
+):
+    """
+    Webhook que se activa cuando se crea un nuevo registro en la tabla 'informe_cadastro'.
+    Actualiza automáticamente el campo 'Observações da Validação Credito' en Pipefy.
+    
+    ARQUITECTURA MODULAR:
+    - Supabase detecta INSERT en informe_cadastro
+    - Dispara webhook automáticamente
+    - Este endpoint actualiza Pipefy
+    - Máximo desacoplamiento entre servicios
+    """
+    try:
+        logger.info("🔔 Webhook Supabase recibido para nuevo informe")
+        
+        # Validar que es un INSERT en la tabla correcta
+        if payload.type != "INSERT":
+            logger.info(f"ℹ️ Webhook ignorado: tipo '{payload.type}' no es INSERT")
+            return {"status": "ignored", "reason": "not_insert_event"}
+        
+        if payload.table != "informe_cadastro":
+            logger.info(f"ℹ️ Webhook ignorado: tabla '{payload.table}' no es informe_cadastro")
+            return {"status": "ignored", "reason": "wrong_table"}
+        
+        # Extraer datos del registro
+        record = payload.record
+        if not record:
+            logger.error("❌ No se encontró registro en el payload del webhook")
+            raise HTTPException(status_code=400, detail="Registro no encontrado en payload")
+        
+        case_id = record.get("case_id")
+        summary_report = record.get("summary_report")
+        
+        if not case_id:
+            logger.error("❌ case_id no encontrado en el registro")
+            raise HTTPException(status_code=400, detail="case_id requerido")
+        
+        if not summary_report:
+            logger.warning("⚠️ summary_report vacío, usando informe completo")
+            summary_report = record.get("informe", "Informe generado por CrewAI")
+        
+        logger.info(f"📋 Procesando informe para case_id: {case_id}")
+        
+        # Actualizar Pipefy en background para no bloquear respuesta
+        background_tasks.add_task(
+            update_pipefy_observacoes_field,
+            case_id,
+            summary_report
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Webhook procesado para case_id {case_id}",
+            "service": "document_ingestion_service",
+            "case_id": case_id,
+            "pipefy_update": "initiated_in_background",
+            "architecture": "event_driven_webhook",
+            "webhook_source": "supabase_database"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ ERRO inesperado en webhook Supabase: {e}")
+        import traceback
+        logger.error(f"TRACEBACK: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
+
+# 🧪 ENDPOINT DE PRUEBA - Para probar la integración Pipefy manualmente
+@app.post("/test/update-pipefy-observacoes")
+async def test_update_pipefy_observacoes(
+    case_id: str,
+    informe_content: str
+):
+    """
+    Endpoint de prueba para actualizar manualmente el campo Observações en Pipefy.
+    Útil para testing y debugging.
+    """
+    try:
+        logger.info(f"🧪 Test: Actualizando Pipefy para case_id {case_id}")
+        
+        success = await update_pipefy_observacoes_field(case_id, informe_content)
+        
+        if success:
+            return {
+                "status": "success",
+                "message": f"Campo actualizado exitosamente para case_id {case_id}",
+                "case_id": case_id
+            }
+        else:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Error al actualizar campo para case_id {case_id}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ ERRO en test endpoint: {e}")
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
 @app.get("/")
