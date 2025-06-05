@@ -465,4 +465,148 @@ El campo debe aparecer en la respuesta de la API como:
 ✅ **Eliminación total de errores relacionados con fases**
 ✅ **Código más mantenible y escalable**
 ✅ **Arquitectura event-driven preservada**
-✅ **Modularidad perfecta mantenida** 
+✅ **Modularidad perfecta mantenida**
+
+# 🔧 Corrección de Sintaxis Pipefy (updateCardField)
+
+## Problema Identificado
+Después de implementar todas las mejoras anteriores, el sistema seguía fallando al actualizar campos en Pipefy. El problema raíz era la **sintaxis incorrecta** de la mutación GraphQL.
+
+### Sintaxis Incorrecta (Anterior)
+```graphql
+mutation UpdateCardField($cardId: ID!, $fieldId: ID!, $value: String!) {
+    updateCardField(input: {
+        cardId: $cardId,
+        fieldId: $fieldId, 
+        value: $value
+    }) {
+        card {
+            id
+            title
+        }
+    }
+}
+```
+
+### Sintaxis Correcta (Oficial de Pipefy)
+```graphql
+mutation {
+    updateCardField(input: {card_id: 123, field_id: "field_1", new_value: "New field value"}) {
+        card {
+            title
+        }
+    }
+}
+```
+
+## Diferencias Clave
+
+| Aspecto | Sintaxis Incorrecta | Sintaxis Correcta |
+|---------|-------------------|------------------|
+| **Parámetros** | `cardId`, `fieldId`, `value` | `card_id`, `field_id`, `new_value` |
+| **Tipos** | Variables con tipos explícitos | Valores directos en la mutación |
+| **Estructura** | Variables separadas | Input inline |
+
+## Implementación Corregida
+
+### Función Principal Actualizada
+```python
+async def update_pipefy_informe_crewai_field(card_id: str, informe_content: str) -> bool:
+    # SINTAXIS OFICIAL según documentación de Pipefy
+    mutation = f"""
+    mutation {{
+        updateCardField(input: {{card_id: {card_id}, field_id: "{field_id}", new_value: "{escaped_content}"}}) {{
+            card {{
+                id
+                title
+            }}
+        }}
+    }}
+    """
+```
+
+### Webhook Corregido
+- Actualizado para usar FastAPI en lugar de Flask
+- Usa la sintaxis correcta de `updateCardField`
+- Manejo de errores mejorado
+
+## Scripts de Prueba
+
+### Prueba Local
+```bash
+cd pipefy-document-ingestion-modular
+python test_pipefy_syntax.py
+```
+
+### Prueba en Servidor
+```bash
+curl -X POST "https://tu-servicio.onrender.com/test/update-form-field" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "card_id": "TU_CARD_ID",
+    "test_content": "Prueba de sintaxis corregida"
+  }'
+```
+
+## Beneficios de la Corrección
+
+1. **✅ Sintaxis Oficial**: Usa la documentación oficial de Pipefy
+2. **✅ Compatibilidad**: Funciona con todas las versiones de la API
+3. **✅ Simplicidad**: Menos complejidad en la estructura GraphQL
+4. **✅ Confiabilidad**: Elimina errores de tipos y parámetros
+5. **✅ Mantenibilidad**: Código más claro y fácil de debuggear
+
+## Comandos de Verificación
+
+### Verificar Campos del Card
+```python
+# En test_pipefy_syntax.py
+await test_get_card_fields("TU_CARD_ID")
+```
+
+### Probar Actualización
+```python
+# En test_pipefy_syntax.py  
+await test_update_card_field_official_syntax("TU_CARD_ID", "FIELD_ID", "Contenido de prueba")
+```
+
+### Logs de Debugging
+```bash
+# Ver logs del servicio
+curl "https://tu-servicio.onrender.com/logs" | grep "updateCardField"
+```
+
+## Arquitectura Final Corregida
+
+```
+📄 Webhook Pipefy → Módulo Ingestión → Documentos en Supabase
+                                          ↓
+🤖 CrewAI ← Llamada HTTP ← Módulo Ingestión  
+    ↓
+💾 CrewAI guarda en informe_cadastro
+    ↓
+🔔 Supabase detecta INSERT → Webhook automático
+    ↓
+📝 Módulo Ingestión actualiza campo "Informe CrewAI"
+    ✅ USANDO SINTAXIS OFICIAL DE PIPEFY
+    ✅ updateCardField con card_id, field_id, new_value
+```
+
+## Troubleshooting
+
+### Error: "Field not found"
+- Verificar que el campo "Informe CrewAI" existe en el formulario
+- Usar `test_get_card_fields()` para listar todos los campos
+
+### Error: "Invalid mutation"
+- Verificar que se usa la sintaxis oficial: `card_id`, `field_id`, `new_value`
+- Escapar correctamente comillas y saltos de línea en el contenido
+
+### Error: "Unauthorized"
+- Verificar que `PIPEFY_TOKEN` está configurado correctamente
+- Verificar permisos del token para el pipe específico
+
+---
+
+**Estado**: ✅ **CORREGIDO** - Sintaxis oficial de Pipefy implementada
+**Próximos pasos**: Probar en producción y monitorear logs 

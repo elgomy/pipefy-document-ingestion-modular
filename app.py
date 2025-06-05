@@ -236,7 +236,7 @@ async def get_pipefy_field_id_for_informe_crewai(card_id: str) -> Optional[str]:
 async def update_pipefy_informe_crewai_field(card_id: str, informe_content: str) -> bool:
     """
     Actualiza el campo 'Informe CrewAI' en Pipefy.
-    SIMPLIFICADO: Funciona directamente con campos del formulario del card.
+    CORREGIDO: Usa la sintaxis correcta de updateCardField según documentación oficial.
     
     Args:
         card_id: ID del card de Pipefy
@@ -255,30 +255,20 @@ async def update_pipefy_informe_crewai_field(card_id: str, informe_content: str)
             logger.error(f"❌ No se pudo encontrar el campo 'Informe CrewAI' en el card {card_id}")
             return False
         
-        # PASO 2: Actualizar el campo con el contenido del informe
+        # PASO 2: Actualizar el campo con la sintaxis CORRECTA de Pipefy
         logger.info(f"📝 Actualizando campo ID {field_id} con el informe...")
         
+        # SINTAXIS CORREGIDA según documentación oficial de Pipefy
         mutation = """
-        mutation UpdateCardField($cardId: ID!, $fieldId: ID!, $newValue: String!) {
-            updateCardField(input: {
-                card_id: $cardId,
-                field_id: $fieldId,
-                new_value: $newValue
-            }) {
+        mutation {
+            updateCardField(input: {card_id: %s, field_id: "%s", new_value: "%s"}) {
                 card {
                     id
                     title
                 }
-                success
             }
         }
-        """
-        
-        variables = {
-            "cardId": card_id,
-            "fieldId": field_id,
-            "newValue": informe_content
-        }
+        """ % (card_id, field_id, informe_content.replace('"', '\\"').replace('\n', '\\n'))
         
         headers = {
             "Authorization": f"Bearer {PIPEFY_TOKEN}",
@@ -286,8 +276,7 @@ async def update_pipefy_informe_crewai_field(card_id: str, informe_content: str)
         }
         
         payload = {
-            "query": mutation,
-            "variables": variables
+            "query": mutation
         }
         
         async with httpx.AsyncClient() as client:
@@ -300,10 +289,9 @@ async def update_pipefy_informe_crewai_field(card_id: str, informe_content: str)
                 return False
             
             result = data.get("data", {}).get("updateCardField", {})
-            success = result.get("success", False)
+            card_info = result.get("card", {})
             
-            if success:
-                card_info = result.get("card", {})
+            if card_info and card_info.get("id"):
                 logger.info(f"✅ Campo 'Informe CrewAI' atualizado com sucesso!")
                 logger.info(f"   - Card ID: {card_info.get('id')}")
                 logger.info(f"   - Card Title: {card_info.get('title')}")
@@ -311,7 +299,7 @@ async def update_pipefy_informe_crewai_field(card_id: str, informe_content: str)
                 logger.info(f"   - Conteúdo: {informe_content[:100]}...")
                 return True
             else:
-                logger.error(f"❌ Falha ao atualizar campo. Success: {success}")
+                logger.error(f"❌ Resposta inesperada da mutação: {result}")
                 return False
                 
     except Exception as e:
@@ -832,20 +820,20 @@ async def handle_pipefy_webhook(request: Request, background_tasks: BackgroundTa
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
 # 🔔 WEBHOOK SUPABASE - Endpoint para recibir notificaciones de nuevos informes
-@app.route('/webhook/supabase', methods=['POST'])
-def supabase_webhook():
+@app.post('/webhook/supabase')
+async def supabase_webhook(request: Request):
     """
     Webhook que recibe notificaciones de Supabase cuando se inserta un nuevo informe.
-    SIMPLIFICADO: Usa la nueva estrategia de campos en formulario.
+    CORREGIDO: Usa FastAPI y sintaxis correcta de updateCardField.
     """
     try:
-        data = request.get_json()
+        data = await request.json()
         logger.info(f"📨 Webhook Supabase recebido: {json.dumps(data, indent=2)}")
         
         # Verificar que es un INSERT en la tabla informe_cadastro
         if data.get('type') != 'INSERT' or data.get('table') != 'informe_cadastro':
             logger.info(f"⏭️ Webhook ignorado - Tipo: {data.get('type')}, Tabla: {data.get('table')}")
-            return jsonify({"status": "ignored", "reason": "not_informe_insert"}), 200
+            return {"status": "ignored", "reason": "not_informe_insert"}
         
         record = data.get('record', {})
         case_id = record.get('case_id')
@@ -854,18 +842,18 @@ def supabase_webhook():
         
         if not case_id or not informe:
             logger.warning(f"⚠️ Webhook com dados incompletos - case_id: {case_id}, informe presente: {bool(informe)}")
-            return jsonify({"status": "error", "message": "case_id ou informe ausente"}), 400
+            raise HTTPException(status_code=400, detail="case_id ou informe ausente")
         
         logger.info(f"🎯 Processando informe para case_id: {case_id}")
         logger.info(f"   - Status: {status}")
         logger.info(f"   - Tamanho do informe: {len(informe)} caracteres")
         
-        # Executar atualização do Pipefy de forma assíncrona
+        # Ejecutar actualización del Pipefy de forma asíncrona
         async def update_pipefy():
             try:
                 logger.info(f"🚀 Iniciando atualização do Pipefy para case_id: {case_id}")
                 
-                # Usar a função simplificada
+                # Usar la función corregida con sintaxis oficial de Pipefy
                 success = await update_pipefy_informe_crewai_field(case_id, informe)
                 
                 if success:
@@ -876,19 +864,21 @@ def supabase_webhook():
             except Exception as e:
                 logger.error(f"❌ Erro na atualização assíncrona do Pipefy: {e}")
         
-        # Executar em background
+        # Ejecutar en background
         asyncio.create_task(update_pipefy())
         
-        return jsonify({
+        return {
             "status": "success", 
             "message": "Webhook processado com sucesso",
             "case_id": case_id,
-            "strategy": "simplified_form_field"
-        }), 200
+            "strategy": "corrected_updateCardField_syntax"
+        }
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Erro no webhook Supabase: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 # 🧪 ENDPOINT DE PRUEBA - Para verificar fase del card y movimiento
 @app.post("/test/check-and-move-card")
@@ -955,49 +945,44 @@ async def test_update_pipefy_with_phase_handling(
         logger.error(f"❌ ERRO en test endpoint: {e}")
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
-@app.route('/test/update-form-field', methods=['POST'])
-def test_update_form_field():
+@app.post("/test/update-form-field")
+async def test_update_form_field(request: Request):
     """
     Endpoint de prueba para verificar la actualización de campos en formulario.
-    NUEVA ESTRATEGIA: Campo creado directamente en el formulario del card.
+    CORREGIDO: Usa la sintaxis correcta de updateCardField de Pipefy.
     """
     try:
-        data = request.get_json()
+        data = await request.json()
         card_id = data.get('card_id')
         test_content = data.get('test_content', f'🧪 Prueba de campo en formulario - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
         
         if not card_id:
-            return jsonify({"error": "card_id es requerido"}), 400
+            raise HTTPException(status_code=400, detail="card_id es requerido")
         
         logger.info(f"🧪 Prueba de actualización de campo en formulario para card: {card_id}")
         
-        # Ejecutar actualización de forma asíncrona
-        async def test_update():
-            try:
-                success = await update_pipefy_informe_crewai_field(card_id, test_content)
-                return success
-            except Exception as e:
-                logger.error(f"❌ Error en prueba: {e}")
-                return False
+        # Ejecutar actualización usando la función corregida
+        success = await update_pipefy_informe_crewai_field(card_id, test_content)
         
-        # Ejecutar la prueba
-        import asyncio
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        success = loop.run_until_complete(test_update())
-        loop.close()
+        if success:
+            return {
+                "success": True,
+                "card_id": card_id,
+                "test_content": test_content,
+                "strategy": "form_field_direct_corrected",
+                "message": "Campo actualizado exitosamente con sintaxis corregida"
+            }
+        else:
+            raise HTTPException(
+                status_code=500, 
+                detail="Error al actualizar campo con sintaxis corregida"
+            )
         
-        return jsonify({
-            "success": success,
-            "card_id": card_id,
-            "test_content": test_content,
-            "strategy": "form_field_direct",
-            "message": "Campo actualizado exitosamente" if success else "Error al actualizar campo"
-        }), 200 if success else 500
-        
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Error en prueba de campo en formulario: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 @app.get("/")
 async def root():
