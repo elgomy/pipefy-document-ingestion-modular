@@ -127,6 +127,7 @@ class SupabaseWebhookPayload(BaseModel):
 async def get_pipefy_field_id_for_informe_crewai(card_id: str) -> Optional[str]:
     """
     Detecta automáticamente el field_id del campo 'Informe CrewAI' en Pipefy.
+    OPTIMIZADO: Funciona con campos creados directamente en el formulario del card.
     
     Args:
         card_id: ID del card de Pipefy
@@ -183,15 +184,27 @@ async def get_pipefy_field_id_for_informe_crewai(card_id: str) -> Optional[str]:
             
             fields = card_data.get("fields", [])
             
-            # Buscar por nome exato o palabras-chave para "Informe CrewAI"
+            # Buscar por nome exato "Informe CrewAI"
+            for field in fields:
+                field_info = field.get("field", {})
+                field_label = field_info.get("label", "").strip()
+                field_name = field.get("name", "").strip()
+                
+                # Verificar coincidencia exacta con "Informe CrewAI"
+                if field_label == "Informe CrewAI" or field_name == "Informe CrewAI":
+                    field_id = field_info.get("id")
+                    logger.info(f"✅ Campo 'Informe CrewAI' encontrado: ID {field_id}")
+                    logger.info(f"   - Label: '{field_label}'")
+                    logger.info(f"   - Name: '{field_name}'")
+                    logger.info(f"   - Type: {field_info.get('type')}")
+                    return field_id
+            
+            # Si no se encuentra con nombre exacto, buscar por palabras clave
             target_keywords = [
                 "informe crewai",
-                "informe crew ai",
-                "informe crew",
+                "informe crew ai", 
                 "crewai informe",
-                "crew ai informe",
-                "informe ai",
-                "informe"
+                "crew ai informe"
             ]
             
             for field in fields:
@@ -199,14 +212,20 @@ async def get_pipefy_field_id_for_informe_crewai(card_id: str) -> Optional[str]:
                 field_label = field_info.get("label", "").lower()
                 field_name = field.get("name", "").lower()
                 
-                # Verificar coincidencia exacta o por palabras clave
                 for keyword in target_keywords:
                     if keyword in field_label or keyword in field_name:
                         field_id = field_info.get("id")
-                        logger.info(f"✅ Campo encontrado: '{field_info.get('label')}' (ID: {field_id})")
+                        logger.info(f"✅ Campo encontrado por keyword '{keyword}': ID {field_id}")
+                        logger.info(f"   - Label: '{field_info.get('label')}'")
+                        logger.info(f"   - Name: '{field.get('name')}'")
                         return field_id
             
             logger.warning(f"⚠️ Campo 'Informe CrewAI' não encontrado no card {card_id}")
+            logger.info("📋 Campos disponibles en el card:")
+            for field in fields:
+                field_info = field.get("field", {})
+                logger.info(f"   - '{field.get('name')}' (Label: '{field_info.get('label')}', ID: {field_info.get('id')})")
+            
             return None
             
     except Exception as e:
@@ -216,68 +235,87 @@ async def get_pipefy_field_id_for_informe_crewai(card_id: str) -> Optional[str]:
 # 📝 Función para actualizar campo específico en Pipefy
 async def update_pipefy_informe_crewai_field(card_id: str, informe_content: str) -> bool:
     """
-    Actualiza el campo 'Informe CrewAI' en Pipefy con el informe.
-    MEJORADO: Verifica la fase del card y lo mueve si es necesario.
+    Actualiza el campo 'Informe CrewAI' en Pipefy.
+    SIMPLIFICADO: Funciona directamente con campos del formulario del card.
     
     Args:
         card_id: ID del card de Pipefy
-        informe_content: Contenido del informe a guardar
+        informe_content: Contenido del informe a actualizar
     
     Returns:
         bool: True si la actualización fue exitosa, False en caso contrario
     """
     try:
-        logger.info(f"📝 Iniciando actualización de campo 'Informe CrewAI' para card {card_id}")
+        logger.info(f"🔄 Iniciando actualización del campo 'Informe CrewAI' para card: {card_id}")
         
-        # PASO 1: Verificar fase actual y mover si es necesario
-        logger.info(f"🔍 Verificando fase actual del card {card_id}...")
-        phase_info = await get_card_current_phase_and_move_if_needed(card_id)
-        
-        if "error" in phase_info:
-            logger.error(f"❌ Error al verificar fase del card {card_id}: {phase_info}")
-            return False
-        
-        # Registrar información de la fase
-        current_phase_name = phase_info.get("current_phase_name", "Unknown")
-        moved = phase_info.get("moved", False)
-        status = phase_info.get("status", "unknown")
-        
-        logger.info(f"📍 Card {card_id} - Fase: {current_phase_name}, Movido: {moved}, Status: {status}")
-        
-        # Si se movió el card, esperar un momento para que se actualice
-        if moved:
-            logger.info(f"⏳ Esperando 3 segundos para que se complete el movimiento del card...")
-            await asyncio.sleep(3)
-        
-        # PASO 2: Detectar automáticamente el field_id
-        logger.info(f"🔍 Buscando campo 'Informe CrewAI' en card {card_id}...")
+        # PASO 1: Buscar el field_id del campo 'Informe CrewAI'
         field_id = await get_pipefy_field_id_for_informe_crewai(card_id)
         
         if not field_id:
-            logger.error(f"❌ No se pudo encontrar el campo 'Informe CrewAI' para card {card_id}")
-            logger.error(f"   Fase actual: {current_phase_name}")
-            logger.error(f"   Card movido: {moved}")
-            logger.error(f"   Esto puede indicar que el campo no existe en esta fase o hay un problema de permisos")
+            logger.error(f"❌ No se pudo encontrar el campo 'Informe CrewAI' en el card {card_id}")
             return False
         
-        logger.info(f"✅ Campo 'Informe CrewAI' encontrado con ID: {field_id}")
+        # PASO 2: Actualizar el campo con el contenido del informe
+        logger.info(f"📝 Actualizando campo ID {field_id} con el informe...")
         
-        # PASO 3: Actualizar el campo
-        logger.info(f"💾 Actualizando campo {field_id} con el informe...")
-        success = await update_pipefy_card_field(card_id, field_id, informe_content)
+        mutation = """
+        mutation UpdateCardField($cardId: ID!, $fieldId: ID!, $newValue: String!) {
+            updateCardField(input: {
+                card_id: $cardId,
+                field_id: $fieldId,
+                new_value: $newValue
+            }) {
+                card {
+                    id
+                    title
+                }
+                success
+            }
+        }
+        """
         
-        if success:
-            logger.info(f"✅ Campo 'Informe CrewAI' actualizado exitosamente para card {card_id}")
-            logger.info(f"   Fase final: {current_phase_name}")
-            logger.info(f"   Card fue movido: {moved}")
-            logger.info(f"   Field ID usado: {field_id}")
-        else:
-            logger.error(f"❌ Error al actualizar campo en Pipefy para card {card_id}")
+        variables = {
+            "cardId": card_id,
+            "fieldId": field_id,
+            "newValue": informe_content
+        }
         
-        return success
+        headers = {
+            "Authorization": f"Bearer {PIPEFY_TOKEN}",
+            "Content-Type": "application/json"
+        }
         
+        payload = {
+            "query": mutation,
+            "variables": variables
+        }
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post("https://api.pipefy.com/graphql", json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            if "errors" in data:
+                logger.error(f"❌ Erro GraphQL ao atualizar campo: {data['errors']}")
+                return False
+            
+            result = data.get("data", {}).get("updateCardField", {})
+            success = result.get("success", False)
+            
+            if success:
+                card_info = result.get("card", {})
+                logger.info(f"✅ Campo 'Informe CrewAI' atualizado com sucesso!")
+                logger.info(f"   - Card ID: {card_info.get('id')}")
+                logger.info(f"   - Card Title: {card_info.get('title')}")
+                logger.info(f"   - Field ID: {field_id}")
+                logger.info(f"   - Conteúdo: {informe_content[:100]}...")
+                return True
+            else:
+                logger.error(f"❌ Falha ao atualizar campo. Success: {success}")
+                return False
+                
     except Exception as e:
-        logger.error(f"ERRO ao atualizar campo Pipefy para card {card_id}: {e}")
+        logger.error(f"❌ Erro ao atualizar campo 'Informe CrewAI': {e}")
         return False
 
 # Funciones auxiliares (iguales al original)
@@ -794,64 +832,63 @@ async def handle_pipefy_webhook(request: Request, background_tasks: BackgroundTa
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
 # 🔔 WEBHOOK SUPABASE - Endpoint para recibir notificaciones de nuevos informes
-@app.post("/webhook/supabase/informe-created")
-async def webhook_supabase_informe_created(
-    payload: SupabaseWebhookPayload,
-    background_tasks: BackgroundTasks
-):
+@app.route('/webhook/supabase', methods=['POST'])
+def supabase_webhook():
     """
-    Webhook que se activa cuando se crea un nuevo registro en la tabla 'informe_cadastro'.
-    Actualiza automáticamente el campo 'Informe CrewAI' en Pipefy.
-    
-    ARQUITECTURA MODULAR:
-    - CrewAI → Guarda informe en informe_cadastro
-    - Supabase → Detecta INSERT y dispara webhook
-    - Este módulo → Recibe webhook y actualiza Pipefy
-    - Resultado: Desacoplamiento total entre servicios
+    Webhook que recibe notificaciones de Supabase cuando se inserta un nuevo informe.
+    SIMPLIFICADO: Usa la nueva estrategia de campos en formulario.
     """
     try:
-        logger.info("🔔 Webhook Supabase recibido para nuevo informe")
+        data = request.get_json()
+        logger.info(f"📨 Webhook Supabase recebido: {json.dumps(data, indent=2)}")
         
-        # Validar que es un evento INSERT en la tabla correcta
-        if payload.type != "INSERT":
-            logger.warning(f"⚠️ Evento ignorado: {payload.type} (solo procesamos INSERT)")
-            return {"status": "ignored", "reason": "not_insert_event"}
+        # Verificar que es un INSERT en la tabla informe_cadastro
+        if data.get('type') != 'INSERT' or data.get('table') != 'informe_cadastro':
+            logger.info(f"⏭️ Webhook ignorado - Tipo: {data.get('type')}, Tabla: {data.get('table')}")
+            return jsonify({"status": "ignored", "reason": "not_informe_insert"}), 200
         
-        if payload.table != "informe_cadastro":
-            logger.warning(f"⚠️ Tabla ignorada: {payload.table} (solo procesamos informe_cadastro)")
-            return {"status": "ignored", "reason": "wrong_table"}
+        record = data.get('record', {})
+        case_id = record.get('case_id')
+        informe = record.get('informe')
+        status = record.get('status')
         
-        # Extraer datos del nuevo registro
-        record = payload.record
-        case_id = record.get("case_id")
-        summary_report = record.get("summary_report", "")
+        if not case_id or not informe:
+            logger.warning(f"⚠️ Webhook com dados incompletos - case_id: {case_id}, informe presente: {bool(informe)}")
+            return jsonify({"status": "error", "message": "case_id ou informe ausente"}), 400
         
-        if not case_id:
-            logger.error("❌ case_id no encontrado en el registro")
-            return {"status": "error", "reason": "missing_case_id"}
+        logger.info(f"🎯 Processando informe para case_id: {case_id}")
+        logger.info(f"   - Status: {status}")
+        logger.info(f"   - Tamanho do informe: {len(informe)} caracteres")
         
-        logger.info(f"📋 Procesando informe para case_id: {case_id}")
+        # Executar atualização do Pipefy de forma assíncrona
+        async def update_pipefy():
+            try:
+                logger.info(f"🚀 Iniciando atualização do Pipefy para case_id: {case_id}")
+                
+                # Usar a função simplificada
+                success = await update_pipefy_informe_crewai_field(case_id, informe)
+                
+                if success:
+                    logger.info(f"✅ Pipefy atualizado com sucesso para case_id: {case_id}")
+                else:
+                    logger.error(f"❌ Falha ao atualizar Pipefy para case_id: {case_id}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Erro na atualização assíncrona do Pipefy: {e}")
         
-        # Actualizar Pipefy en background para no bloquear respuesta
-        background_tasks.add_task(
-            update_pipefy_informe_crewai_field,
-            case_id,
-            summary_report
-        )
+        # Executar em background
+        asyncio.create_task(update_pipefy())
         
-        logger.info(f"🚀 Tarea de actualización Pipefy programada para case_id: {case_id}")
-        
-        return {
-            "status": "success",
-            "message": "Webhook procesado exitosamente",
+        return jsonify({
+            "status": "success", 
+            "message": "Webhook processado com sucesso",
             "case_id": case_id,
-            "pipefy_update_scheduled": True,
-            "architecture": "event_driven_modular"
-        }
+            "strategy": "simplified_form_field"
+        }), 200
         
     except Exception as e:
-        logger.error(f"❌ Error procesando webhook Supabase: {e}")
-        return {"status": "error", "error": str(e)}
+        logger.error(f"❌ Erro no webhook Supabase: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 # 🧪 ENDPOINT DE PRUEBA - Para verificar fase del card y movimiento
 @app.post("/test/check-and-move-card")
@@ -918,6 +955,50 @@ async def test_update_pipefy_with_phase_handling(
         logger.error(f"❌ ERRO en test endpoint: {e}")
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
+@app.route('/test/update-form-field', methods=['POST'])
+def test_update_form_field():
+    """
+    Endpoint de prueba para verificar la actualización de campos en formulario.
+    NUEVA ESTRATEGIA: Campo creado directamente en el formulario del card.
+    """
+    try:
+        data = request.get_json()
+        card_id = data.get('card_id')
+        test_content = data.get('test_content', f'🧪 Prueba de campo en formulario - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+        
+        if not card_id:
+            return jsonify({"error": "card_id es requerido"}), 400
+        
+        logger.info(f"🧪 Prueba de actualización de campo en formulario para card: {card_id}")
+        
+        # Ejecutar actualización de forma asíncrona
+        async def test_update():
+            try:
+                success = await update_pipefy_informe_crewai_field(card_id, test_content)
+                return success
+            except Exception as e:
+                logger.error(f"❌ Error en prueba: {e}")
+                return False
+        
+        # Ejecutar la prueba
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        success = loop.run_until_complete(test_update())
+        loop.close()
+        
+        return jsonify({
+            "success": success,
+            "card_id": card_id,
+            "test_content": test_content,
+            "strategy": "form_field_direct",
+            "message": "Campo actualizado exitosamente" if success else "Error al actualizar campo"
+        }), 200 if success else 500
+        
+    except Exception as e:
+        logger.error(f"❌ Error en prueba de campo en formulario: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
 @app.get("/")
 async def root():
     return {
@@ -966,695 +1047,15 @@ async def health_check():
         "cold_start_handling": "enabled"
     }
 
-async def update_pipefy_card_field(card_id: str, field_id: str, new_value: str) -> bool:
-    """
-    Actualiza un campo específico de un card en Pipefy.
-    
-    Args:
-        card_id: ID del card a actualizar
-        field_id: ID del campo a actualizar (ej: "observacoes_validacao_credito")
-        new_value: Nuevo valor para el campo
-    
-    Returns:
-        bool: True si la actualización fue exitosa, False en caso contrario
-    """
-    if not PIPEFY_TOKEN:
-        logger.error("ERRO: Token Pipefy não configurado para atualização.")
-        return False
-    
-    # Usar mutación más simple y robusta para campos de texto
-    mutation = """
-    mutation UpdateCardField($cardId: ID!, $fieldId: ID!, $newValue: String!) {
-        updateCardField(input: {
-            card_id: $cardId,
-            field_id: $fieldId,
-            new_value: $newValue
-        }) {
-            success
-            clientMutationId
-        }
-    }
-    """
-    
-    variables = {
-        "cardId": card_id,
-        "fieldId": field_id,
-        "newValue": new_value
-    }
-    
-    headers = {
-        "Authorization": f"Bearer {PIPEFY_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "query": mutation,
-        "variables": variables
-    }
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post("https://api.pipefy.com/graphql", json=payload, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            
-            if "errors" in data:
-                logger.error(f"ERRO GraphQL ao atualizar campo Pipefy: {data['errors']}")
-                
-                # Intentar con formato alternativo si falla
-                logger.info("🔄 Intentando con formato alternativo...")
-                return await update_pipefy_card_field_alternative(card_id, field_id, new_value)
-            
-            result = data.get("data", {}).get("updateCardField", {})
-            success = result.get("success", False)
-            
-            if success:
-                logger.info(f"✅ Campo '{field_id}' atualizado com sucesso no card {card_id}")
-                return True
-            else:
-                logger.error(f"❌ Falha ao atualizar campo '{field_id}' no card {card_id}")
-                return False
-                
-    except Exception as e:
-        logger.error(f"ERRO ao atualizar campo Pipefy para card {card_id}: {e}")
-        return False
-
-async def update_pipefy_card_field_alternative(card_id: str, field_id: str, new_value: str) -> bool:
-    """
-    Método alternativo para actualizar campos en Pipefy usando formato de array.
-    """
-    mutation = """
-    mutation UpdateCardField($cardId: ID!, $fieldId: ID!, $newValue: [String!]!) {
-        updateCardField(input: {
-            card_id: $cardId,
-            field_id: $fieldId,
-            new_value: $newValue
-        }) {
-            success
-            clientMutationId
-        }
-    }
-    """
-    
-    variables = {
-        "cardId": card_id,
-        "fieldId": field_id,
-        "newValue": [new_value]
-    }
-    
-    headers = {
-        "Authorization": f"Bearer {PIPEFY_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "query": mutation,
-        "variables": variables
-    }
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post("https://api.pipefy.com/graphql", json=payload, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            
-            if "errors" in data:
-                logger.error(f"ERRO GraphQL (método alternativo) ao atualizar campo Pipefy: {data['errors']}")
-                return False
-            
-            result = data.get("data", {}).get("updateCardField", {})
-            success = result.get("success", False)
-            
-            if success:
-                logger.info(f"✅ Campo '{field_id}' atualizado com sucesso (método alternativo) no card {card_id}")
-                return True
-            else:
-                logger.error(f"❌ Falha ao atualizar campo '{field_id}' (método alternativo) no card {card_id}")
-                return False
-                
-    except Exception as e:
-        logger.error(f"ERRO (método alternativo) ao atualizar campo Pipefy para card {card_id}: {e}")
-        return False
-
-# 🔧 ENDPOINT DE UTILIDAD - Para despertar el servicio CrewAI
-@app.post("/utils/wake-crewai")
-async def wake_crewai_service():
-    """
-    Endpoint para despertar manualmente el servicio CrewAI.
-    Útil para evitar cold starts antes de procesar webhooks importantes.
-    """
-    try:
-        logger.info("🏥 Despertando servicio CrewAI...")
-        
-        start_time = datetime.now()
-        
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.get(f"{CREWAI_SERVICE_URL}/health")
-            
-            end_time = datetime.now()
-            response_time = (end_time - start_time).total_seconds()
-            
-            if response.status_code == 200:
-                health_data = response.json()
-                logger.info(f"✅ Servicio CrewAI despertado exitosamente en {response_time:.2f}s")
-                
-                return {
-                    "status": "success",
-                    "message": "Servicio CrewAI está activo",
-                    "response_time_seconds": response_time,
-                    "crewai_health": health_data,
-                    "service_url": CREWAI_SERVICE_URL
-                }
-            else:
-                logger.warning(f"⚠️ Servicio CrewAI respondió con status: {response.status_code}")
-                return {
-                    "status": "warning",
-                    "message": f"Servicio respondió con status {response.status_code}",
-                    "response_time_seconds": response_time,
-                    "service_url": CREWAI_SERVICE_URL
-                }
-                
-    except httpx.TimeoutException:
-        logger.error("⏰ Timeout al despertar servicio CrewAI")
-        return {
-            "status": "timeout",
-            "message": "Servicio CrewAI no respondió en 60 segundos",
-            "service_url": CREWAI_SERVICE_URL
-        }
-    except Exception as e:
-        logger.error(f"❌ Error al despertar servicio CrewAI: {e}")
-        return {
-            "status": "error",
-            "message": str(e),
-            "service_url": CREWAI_SERVICE_URL
-        }
-
-# 🔍 Función para detectar la fase actual del card y moverlo si es necesario
+# 🧪 Función para detectar la fase actual del card y moverlo si es necesario
+# NOTA: Mantenida para compatibilidad, pero no necesaria con la nueva estrategia
 async def get_card_current_phase_and_move_if_needed(card_id: str) -> Dict[str, Any]:
     """
     Detecta la fase actual del card y lo mueve a la fase de destino si es necesario.
-    
-    Args:
-        card_id: ID del card de Pipefy
-    
-    Returns:
-        Dict con información de la fase y si se movió el card
+    OBSOLETA: No necesaria con campos en formulario, pero mantenida para compatibilidad.
     """
-    if not PIPEFY_TOKEN:
-        logger.error("ERRO: Token Pipefy não configurado.")
-        return {"error": "token_not_configured"}
-    
-    # Fases conocidas
-    FASE_ORIGEN_ID = "1130856059"  # Fase donde se origina el webhook
-    FASE_DESTINO_ID = "1131156124"  # Fase donde existe el campo "Informe CrewAI"
-    
-    query = """
-    query GetCardPhase($cardId: ID!) {
-        card(id: $cardId) {
-            id
-            current_phase {
-                id
-                name
-            }
-            pipe {
-                id
-                name
-            }
-        }
-    }
-    """
-    
-    variables = {"cardId": card_id}
-    headers = {
-        "Authorization": f"Bearer {PIPEFY_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "query": query,
-        "variables": variables
-    }
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post("https://api.pipefy.com/graphql", json=payload, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            
-            if "errors" in data:
-                logger.error(f"ERRO GraphQL ao buscar fase do card: {data['errors']}")
-                return {"error": "graphql_error", "details": data['errors']}
-            
-            card_data = data.get("data", {}).get("card")
-            if not card_data:
-                logger.warning(f"Card {card_id} não encontrado.")
-                return {"error": "card_not_found"}
-            
-            current_phase = card_data.get("current_phase", {})
-            current_phase_id = current_phase.get("id")
-            current_phase_name = current_phase.get("name", "Unknown")
-            pipe_info = card_data.get("pipe", {})
-            
-            logger.info(f"📍 Card {card_id} está na fase: {current_phase_name} (ID: {current_phase_id})")
-            
-            result = {
-                "card_id": card_id,
-                "current_phase_id": current_phase_id,
-                "current_phase_name": current_phase_name,
-                "pipe_id": pipe_info.get("id"),
-                "pipe_name": pipe_info.get("name"),
-                "moved": False,
-                "target_phase_id": FASE_DESTINO_ID
-            }
-            
-            # Si ya está en la fase de destino, no necesita moverse
-            if current_phase_id == FASE_DESTINO_ID:
-                logger.info(f"✅ Card {card_id} ya está en la fase de destino ({current_phase_name})")
-                result["status"] = "already_in_target_phase"
-                return result
-            
-            # Si está en la fase de origen, moverlo a la fase de destino
-            if current_phase_id == FASE_ORIGEN_ID:
-                logger.info(f"🚀 Moviendo card {card_id} de fase origen a destino...")
-                move_success = await move_card_to_phase(card_id, FASE_DESTINO_ID)
-                
-                if move_success:
-                    logger.info(f"✅ Card {card_id} movido exitosamente a la fase de destino")
-                    result["moved"] = True
-                    result["status"] = "moved_to_target_phase"
-                    return result
-                else:
-                    logger.error(f"❌ Error al mover card {card_id} a la fase de destino")
-                    result["status"] = "move_failed"
-                    return result
-            
-            # Si está en otra fase, registrar pero no mover automáticamente
-            logger.warning(f"⚠️ Card {card_id} está en fase inesperada: {current_phase_name} (ID: {current_phase_id})")
-            result["status"] = "unexpected_phase"
-            return result
-            
-    except Exception as e:
-        logger.error(f"ERRO ao verificar fase do card {card_id}: {e}")
-        return {"error": "exception", "details": str(e)}
-
-# 🚀 Función para mover un card a una fase específica
-async def move_card_to_phase(card_id: str, target_phase_id: str) -> bool:
-    """
-    Mueve un card a una fase específica en Pipefy.
-    
-    Args:
-        card_id: ID del card a mover
-        target_phase_id: ID de la fase de destino
-    
-    Returns:
-        bool: True si el movimiento fue exitoso, False en caso contrario
-    """
-    if not PIPEFY_TOKEN:
-        logger.error("ERRO: Token Pipefy não configurado para mover card.")
-        return False
-    
-    mutation = """
-    mutation MoveCardToPhase($cardId: ID!, $destinationPhaseId: ID!) {
-        moveCardToPhase(input: {
-            card_id: $cardId,
-            destination_phase_id: $destinationPhaseId
-        }) {
-            card {
-                id
-                current_phase {
-                    id
-                    name
-                }
-            }
-            clientMutationId
-        }
-    }
-    """
-    
-    variables = {
-        "cardId": card_id,
-        "destinationPhaseId": target_phase_id
-    }
-    
-    headers = {
-        "Authorization": f"Bearer {PIPEFY_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "query": mutation,
-        "variables": variables
-    }
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post("https://api.pipefy.com/graphql", json=payload, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            
-            if "errors" in data:
-                logger.error(f"ERRO GraphQL ao mover card: {data['errors']}")
-                return False
-            
-            result = data.get("data", {}).get("moveCardToPhase", {})
-            moved_card = result.get("card", {})
-            
-            if moved_card:
-                new_phase = moved_card.get("current_phase", {})
-                new_phase_name = new_phase.get("name", "Unknown")
-                logger.info(f"✅ Card {card_id} movido exitosamente a fase: {new_phase_name}")
-                return True
-            else:
-                logger.error(f"❌ Error al mover card {card_id} - respuesta vacía")
-                return False
-                
-    except Exception as e:
-        logger.error(f"ERRO ao mover card {card_id} para fase {target_phase_id}: {e}")
-        return False
-
-def create_informe_crewai_field_if_not_exists(phase_id):
-    """
-    Crea el campo 'Informe CrewAI' en la fase especificada si no existe.
-    
-    Args:
-        phase_id (str): ID de la fase donde crear el campo
-        
-    Returns:
-        dict: Resultado de la operación con success y field_id
-    """
-    try:
-        logger.info(f"🔧 Verificando si campo 'Informe CrewAI' existe en fase {phase_id}")
-        
-        # Primero verificar si el campo ya existe
-        existing_field_id = get_pipefy_field_id_for_informe_crewai(phase_id)
-        if existing_field_id:
-            logger.info(f"✅ Campo 'Informe CrewAI' ya existe con ID: {existing_field_id}")
-            return {
-                "success": True,
-                "field_id": existing_field_id,
-                "created": False,
-                "message": "Campo ya existía"
-            }
-        
-        # Si no existe, crear el campo
-        logger.info(f"🚀 Creando campo 'Informe CrewAI' en fase {phase_id}")
-        
-        mutation = """
-        mutation CreateInformeCrewAIField($phase_id: ID!, $label: String!, $type: ID!) {
-            createPhaseField(input: {
-                phase_id: $phase_id,
-                label: $label,
-                type: $type,
-                description: "Informe generado automáticamente por CrewAI con análisis de documentos",
-                required: false,
-                editable: true
-            }) {
-                phase_field {
-                    id
-                    label
-                    type
-                }
-            }
-        }
-        """
-        
-        variables = {
-            "phase_id": phase_id,
-            "label": "Informe CrewAI",
-            "type": "long_text"  # Tipo para texto largo según documentación
-        }
-        
-        headers = {
-            'Authorization': f'Bearer {PIPEFY_TOKEN}',
-            'Content-Type': 'application/json'
-        }
-        
-        response = requests.post(
-            PIPEFY_GRAPHQL_URL,
-            json={'query': mutation, 'variables': variables},
-            headers=headers,
-            timeout=30
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            
-            if 'errors' in data:
-                logger.error(f"❌ Error GraphQL creando campo: {data['errors']}")
-                return {
-                    "success": False,
-                    "error": f"GraphQL errors: {data['errors']}",
-                    "created": False
-                }
-            
-            if data.get('data', {}).get('createPhaseField', {}).get('phase_field'):
-                field_info = data['data']['createPhaseField']['phase_field']
-                field_id = field_info['id']
-                
-                logger.info(f"✅ Campo 'Informe CrewAI' creado exitosamente!")
-                logger.info(f"   - ID: {field_id}")
-                logger.info(f"   - Label: {field_info['label']}")
-                logger.info(f"   - Type: {field_info['type']}")
-                
-                return {
-                    "success": True,
-                    "field_id": field_id,
-                    "created": True,
-                    "message": "Campo creado exitosamente"
-                }
-            else:
-                logger.error(f"❌ Respuesta inesperada al crear campo: {data}")
-                return {
-                    "success": False,
-                    "error": "Respuesta inesperada de la API",
-                    "created": False
-                }
-        else:
-            logger.error(f"❌ Error HTTP creando campo: {response.status_code} - {response.text}")
-            return {
-                "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}",
-                "created": False
-            }
-            
-    except Exception as e:
-        logger.error(f"❌ Excepción creando campo 'Informe CrewAI': {str(e)}")
-        return {
-            "success": False,
-            "error": str(e),
-            "created": False
-        }
-
-def update_pipefy_informe_crewai_field_with_auto_creation(card_id, informe_content):
-    """
-    Actualiza el campo 'Informe CrewAI' en Pipefy, creando el campo automáticamente si no existe.
-    
-    Args:
-        card_id (str): ID del card en Pipefy
-        informe_content (str): Contenido del informe a actualizar
-        
-    Returns:
-        dict: Resultado de la operación
-    """
-    try:
-        logger.info(f"🔄 Iniciando actualización de campo 'Informe CrewAI' para card {card_id}")
-        
-        # PASO 1: Verificar fase actual y mover si es necesario
-        phase_result = get_card_current_phase_and_move_if_needed(card_id)
-        if not phase_result["success"]:
-            return {
-                "success": False,
-                "error": f"Error verificando/moviendo fase: {phase_result['error']}"
-            }
-        
-        current_phase_id = phase_result["current_phase_id"]
-        logger.info(f"📍 Card está en fase: {current_phase_id}")
-        
-        # PASO 2: Crear campo si no existe en la fase actual
-        field_creation_result = create_informe_crewai_field_if_not_exists(current_phase_id)
-        if not field_creation_result["success"]:
-            return {
-                "success": False,
-                "error": f"Error creando campo: {field_creation_result['error']}"
-            }
-        
-        field_id = field_creation_result["field_id"]
-        was_created = field_creation_result["created"]
-        
-        if was_created:
-            logger.info(f"🆕 Campo 'Informe CrewAI' fue creado automáticamente en fase {current_phase_id}")
-        else:
-            logger.info(f"✅ Campo 'Informe CrewAI' ya existía en fase {current_phase_id}")
-        
-        # PASO 3: Actualizar el campo con el contenido del informe
-        logger.info(f"📝 Actualizando campo {field_id} con informe...")
-        
-        mutation = """
-        mutation UpdateCardField($card_id: ID!, $field_id: ID!, $new_value: String!) {
-            updateCardField(input: {
-                card_id: $card_id,
-                field_id: $field_id,
-                new_value: $new_value
-            }) {
-                card {
-                    id
-                    title
-                }
-                success
-            }
-        }
-        """
-        
-        variables = {
-            "card_id": int(card_id),
-            "field_id": field_id,
-            "new_value": informe_content
-        }
-        
-        headers = {
-            'Authorization': f'Bearer {PIPEFY_TOKEN}',
-            'Content-Type': 'application/json'
-        }
-        
-        response = requests.post(
-            PIPEFY_GRAPHQL_URL,
-            json={'query': mutation, 'variables': variables},
-            headers=headers,
-            timeout=30
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            
-            if 'errors' in data:
-                logger.error(f"❌ Error GraphQL actualizando campo: {data['errors']}")
-                return {
-                    "success": False,
-                    "error": f"GraphQL errors: {data['errors']}"
-                }
-            
-            if data.get('data', {}).get('updateCardField', {}).get('success'):
-                logger.info(f"✅ Campo 'Informe CrewAI' actualizado exitosamente!")
-                logger.info(f"   - Card ID: {card_id}")
-                logger.info(f"   - Field ID: {field_id}")
-                logger.info(f"   - Fase: {current_phase_id}")
-                logger.info(f"   - Campo creado automáticamente: {'Sí' if was_created else 'No'}")
-                
-                return {
-                    "success": True,
-                    "card_id": card_id,
-                    "field_id": field_id,
-                    "phase_id": current_phase_id,
-                    "field_created": was_created,
-                    "message": "Campo actualizado exitosamente"
-                }
-            else:
-                logger.error(f"❌ Fallo al actualizar campo: {data}")
-                return {
-                    "success": False,
-                    "error": f"Update failed: {data}"
-                }
-        else:
-            logger.error(f"❌ Error HTTP actualizando campo: {response.status_code} - {response.text}")
-            return {
-                "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}"
-            }
-            
-    except Exception as e:
-        logger.error(f"❌ Excepción actualizando campo 'Informe CrewAI': {str(e)}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
-
-@app.route('/supabase-webhook', methods=['POST'])
-def handle_supabase_webhook():
-    """
-    Maneja webhooks de Supabase cuando se inserta un nuevo informe en informe_cadastro.
-    Actualiza automáticamente el campo correspondiente en Pipefy.
-    """
-    try:
-        logger.info("🔔 Webhook de Supabase recibido")
-        
-        # Verificar que sea un evento de INSERT
-        data = request.get_json()
-        if not data:
-            logger.warning("⚠️ Webhook sin datos JSON")
-            return jsonify({"error": "No JSON data provided"}), 400
-        
-        event_type = data.get('type')
-        if event_type != 'INSERT':
-            logger.info(f"ℹ️ Evento ignorado: {event_type} (solo procesamos INSERT)")
-            return jsonify({"message": f"Event type {event_type} ignored"}), 200
-        
-        # Extraer datos del registro insertado
-        record = data.get('record', {})
-        case_id = record.get('case_id')
-        informe = record.get('informe')
-        status = record.get('status')
-        
-        if not case_id or not informe:
-            logger.warning(f"⚠️ Datos incompletos en webhook: case_id={case_id}, informe={'presente' if informe else 'ausente'}")
-            return jsonify({"error": "Missing case_id or informe"}), 400
-        
-        logger.info(f"📋 Procesando informe para case_id: {case_id}")
-        logger.info(f"   - Status: {status}")
-        logger.info(f"   - Longitud informe: {len(informe)} caracteres")
-        
-        # Actualizar campo en Pipefy con creación automática
-        update_result = update_pipefy_informe_crewai_field_with_auto_creation(case_id, informe)
-        
-        if update_result["success"]:
-            logger.info("✅ Webhook procesado exitosamente")
-            logger.info(f"   - Campo creado automáticamente: {'Sí' if update_result.get('field_created') else 'No'}")
-            
-            return jsonify({
-                "success": True,
-                "message": "Informe actualizado en Pipefy",
-                "case_id": case_id,
-                "field_created": update_result.get('field_created', False),
-                "phase_id": update_result.get('phase_id')
-            }), 200
-        else:
-            logger.error(f"❌ Error actualizando Pipefy: {update_result['error']}")
-            return jsonify({
-                "success": False,
-                "error": update_result['error'],
-                "case_id": case_id
-            }), 500
-            
-    except Exception as e:
-        logger.error(f"❌ Error procesando webhook de Supabase: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/test/create-field-auto', methods=['POST'])
-def test_create_field_auto():
-    """
-    Endpoint de prueba para verificar la creación automática de campos.
-    """
-    try:
-        data = request.get_json()
-        card_id = data.get('card_id')
-        test_content = data.get('test_content', 'Contenido de prueba para campo creado automáticamente')
-        
-        if not card_id:
-            return jsonify({"error": "card_id es requerido"}), 400
-        
-        logger.info(f"🧪 Prueba de creación automática de campo para card: {card_id}")
-        
-        # Usar la nueva función con creación automática
-        result = update_pipefy_informe_crewai_field_with_auto_creation(card_id, test_content)
-        
-        return jsonify({
-            "test_result": result,
-            "card_id": card_id,
-            "test_content_length": len(test_content)
-        }), 200 if result["success"] else 500
-        
-    except Exception as e:
-        logger.error(f"❌ Error en prueba de creación automática: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+    # Función mantenida para compatibilidad pero no usada en la nueva estrategia
+    return {"status": "not_needed", "message": "Campo en formulario - no requiere movimiento de fase"}
 
 if __name__ == "__main__":
     import uvicorn

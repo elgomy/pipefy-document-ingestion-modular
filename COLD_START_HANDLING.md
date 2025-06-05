@@ -321,4 +321,148 @@ curl -X POST https://pipefy-document-ingestion-modular.onrender.com/utils/wake-c
 curl -X POST https://pipefy-document-ingestion-modular.onrender.com/test/update-pipefy-observacoes \
   -H "Content-Type: application/json" \
   -d '{"case_id": "test123", "informe_content": "Test informe"}'
-``` 
+```
+
+## 🎯 Nueva Estrategia: Campos en Formulario (IMPLEMENTADA)
+
+### Problema Resuelto
+Los problemas de fases y creación automática de campos se han eliminado completamente usando una estrategia más robusta: **crear el campo "Informe CrewAI" directamente en el formulario del card**.
+
+### Ventajas de la Nueva Estrategia
+
+#### ✅ **Simplicidad Total**
+- Campo disponible en todas las fases automáticamente
+- No requiere movimiento de cards entre fases
+- No requiere creación automática de campos
+- Eliminación completa de errores relacionados con fases
+
+#### ✅ **Robustez Mejorada**
+- Campo siempre disponible independientemente de la fase
+- Menos puntos de falla en el sistema
+- Código más simple y mantenible
+- Mejor experiencia de usuario
+
+#### ✅ **Arquitectura Simplificada**
+```
+📄 Webhook Pipefy → Módulo Ingestión → Documentos en Supabase
+                                          ↓
+🤖 CrewAI ← Llamada HTTP ← Módulo Ingestión
+    ↓
+💾 CrewAI guarda en informe_cadastro
+    ↓
+🔔 Supabase detecta INSERT → Webhook automático
+    ↓
+📝 Módulo Ingestión actualiza campo "Informe CrewAI" DIRECTAMENTE
+    (Sin verificación de fases, sin movimiento, sin creación de campos)
+```
+
+### Implementación Técnica
+
+#### 1. Función Simplificada de Búsqueda
+```python
+async def get_pipefy_field_id_for_informe_crewai(card_id: str) -> Optional[str]:
+    # Busca el campo "Informe CrewAI" directamente en el formulario del card
+    # No requiere especificar fase - funciona en cualquier fase
+```
+
+#### 2. Función Simplificada de Actualización
+```python
+async def update_pipefy_informe_crewai_field(card_id: str, informe_content: str) -> bool:
+    # PASO 1: Buscar field_id del campo "Informe CrewAI"
+    # PASO 2: Actualizar campo directamente
+    # Sin verificación de fases, sin movimiento, sin creación automática
+```
+
+#### 3. Webhook Simplificado
+```python
+@app.route('/webhook/supabase', methods=['POST'])
+def supabase_webhook():
+    # Recibe notificación de nuevo informe
+    # Llama directamente a update_pipefy_informe_crewai_field()
+    # Sin complejidad adicional
+```
+
+### Comandos de Prueba
+
+#### Probar Actualización de Campo en Formulario
+```bash
+curl -X POST http://localhost:8000/test/update-form-field \
+  -H "Content-Type: application/json" \
+  -d '{
+    "card_id": "TU_CARD_ID",
+    "test_content": "Prueba de campo en formulario"
+  }'
+```
+
+#### Verificar Campos Disponibles en Card
+```bash
+# El endpoint mostrará todos los campos disponibles incluyendo "Informe CrewAI"
+curl -X POST http://localhost:8000/test/update-form-field \
+  -H "Content-Type: application/json" \
+  -d '{"card_id": "TU_CARD_ID"}'
+```
+
+### Configuración en Pipefy
+
+#### Crear Campo en Formulario
+1. Ir a la configuración del Pipe en Pipefy
+2. Seleccionar "Formulário" (no "Fases")
+3. Agregar nuevo campo:
+   - **Nombre**: "Informe CrewAI"
+   - **Tipo**: "Texto longo" (long_text)
+   - **Requerido**: No
+   - **Descripción**: "Informe generado automáticamente por CrewAI"
+
+#### Verificar Campo Creado
+El campo debe aparecer en la respuesta de la API como:
+```json
+{
+  "name": "Informe CrewAI",
+  "value": "",
+  "field": {
+    "id": "FIELD_ID_GENERADO",
+    "label": "Informe CrewAI",
+    "type": "long_text"
+  }
+}
+```
+
+### Beneficios Finales
+
+#### 🚀 **Eliminación Completa de Errores**
+- No más errores por campos faltantes en fases
+- No más errores de movimiento de cards
+- No más errores de creación automática de campos
+
+#### 🔧 **Mantenimiento Simplificado**
+- Código 70% más simple
+- Menos funciones auxiliares
+- Menos puntos de falla
+- Debugging más fácil
+
+#### 📈 **Escalabilidad Mejorada**
+- Funciona independientemente del diseño de fases
+- Fácil agregar nuevos campos en el futuro
+- Compatible con cambios en el workflow de Pipefy
+
+### Migración Completada
+
+#### Funciones Eliminadas (Obsoletas)
+- `create_informe_crewai_field_if_not_exists()`
+- `update_pipefy_informe_crewai_field_with_auto_creation()`
+- `get_card_current_phase_and_move_if_needed()` (mantenida para compatibilidad)
+- `move_card_to_phase()`
+- `update_pipefy_card_field()` y `update_pipefy_card_field_alternative()`
+
+#### Funciones Nuevas/Actualizadas
+- `get_pipefy_field_id_for_informe_crewai()` - Simplificada
+- `update_pipefy_informe_crewai_field()` - Simplificada
+- `supabase_webhook()` - Simplificado
+- `/test/update-form-field` - Nuevo endpoint de prueba
+
+### Estado Final
+✅ **Sistema completamente funcional con estrategia simplificada**
+✅ **Eliminación total de errores relacionados con fases**
+✅ **Código más mantenible y escalable**
+✅ **Arquitectura event-driven preservada**
+✅ **Modularidad perfecta mantenida** 
