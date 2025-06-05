@@ -124,9 +124,9 @@ class SupabaseWebhookPayload(BaseModel):
     old_record: Optional[Dict[str, Any]] = None
 
 # 🔍 Función para detectar automáticamente el field_id de Pipefy
-async def get_pipefy_field_id_for_observacoes(card_id: str) -> Optional[str]:
+async def get_pipefy_field_id_for_informe_crewai(card_id: str) -> Optional[str]:
     """
-    Detecta automáticamente el field_id del campo 'Observações da Validação Credito' en Pipefy.
+    Detecta automáticamente el field_id del campo 'Informe CrewAI' en Pipefy.
     
     Args:
         card_id: ID del card de Pipefy
@@ -183,16 +183,15 @@ async def get_pipefy_field_id_for_observacoes(card_id: str) -> Optional[str]:
             
             fields = card_data.get("fields", [])
             
-            # Buscar por nome exato ou palavras-chave
+            # Buscar por nome exato o palabras-chave para "Informe CrewAI"
             target_keywords = [
-                "observações da validação credito",
-                "observacoes da validacao credito", 
-                "observações validação",
-                "observacoes validacao",
-                "validação credito",
-                "validacao credito",
-                "observações",
-                "observacoes"
+                "informe crewai",
+                "informe crew ai",
+                "informe crew",
+                "crewai informe",
+                "crew ai informe",
+                "informe ai",
+                "informe"
             ]
             
             for field in fields:
@@ -207,7 +206,7 @@ async def get_pipefy_field_id_for_observacoes(card_id: str) -> Optional[str]:
                         logger.info(f"✅ Campo encontrado: '{field_info.get('label')}' (ID: {field_id})")
                         return field_id
             
-            logger.warning(f"⚠️ Campo 'Observações da Validação Credito' não encontrado no card {card_id}")
+            logger.warning(f"⚠️ Campo 'Informe CrewAI' não encontrado no card {card_id}")
             return None
             
     except Exception as e:
@@ -215,9 +214,9 @@ async def get_pipefy_field_id_for_observacoes(card_id: str) -> Optional[str]:
         return None
 
 # 📝 Función para actualizar campo específico en Pipefy
-async def update_pipefy_observacoes_field(card_id: str, informe_content: str) -> bool:
+async def update_pipefy_informe_crewai_field(card_id: str, informe_content: str) -> bool:
     """
-    Actualiza el campo 'Observações da Validação Credito' en Pipefy con el informe.
+    Actualiza el campo 'Informe CrewAI' en Pipefy con el informe.
     
     Args:
         card_id: ID del card de Pipefy
@@ -228,16 +227,16 @@ async def update_pipefy_observacoes_field(card_id: str, informe_content: str) ->
     """
     try:
         # Detectar automáticamente el field_id
-        field_id = await get_pipefy_field_id_for_observacoes(card_id)
+        field_id = await get_pipefy_field_id_for_informe_crewai(card_id)
         if not field_id:
-            logger.error(f"❌ No se pudo encontrar el campo 'Observações da Validação Credito' para card {card_id}")
+            logger.error(f"❌ No se pudo encontrar el campo 'Informe CrewAI' para card {card_id}")
             return False
         
         # Actualizar el campo
         success = await update_pipefy_card_field(card_id, field_id, informe_content)
         
         if success:
-            logger.info(f"✅ Campo 'Observações da Validação Credito' actualizado en Pipefy para card {card_id}")
+            logger.info(f"✅ Campo 'Informe CrewAI' actualizado en Pipefy para card {card_id}")
         else:
             logger.error(f"❌ Error al actualizar campo en Pipefy para card {card_id}")
         
@@ -475,8 +474,8 @@ async def get_checklist_url_from_supabase(config_name: str = "checklist_cadastro
 async def call_crewai_analysis_service(case_id: str, documents: List[Dict], checklist_url: str, pipe_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Llama directamente al servicio CrewAI para análisis de documentos.
-    Procesa la respuesta completa y actualiza Pipefy con el resultado.
-    MANTIENE LA MODULARIDAD: Cada servicio mantiene su responsabilidad específica.
+    MANTIENE LA MODULARIDAD: Solo llama al servicio, no guarda en Supabase.
+    El módulo CrewAI se encarga de guardar el informe en la tabla informe_cadastro.
     """
     try:
         # Preparar payload para CrewAI
@@ -508,30 +507,30 @@ async def call_crewai_analysis_service(case_id: str, documents: List[Dict], chec
                     analysis_result = result["analysis_result"]
                     summary_report = analysis_result.get("summary_report", "")
                     
-                    # 1. Guardar análisis en Supabase
-                    logger.info(f"💾 Guardando análisis en Supabase para case_id: {case_id}")
-                    supabase_saved = await save_analysis_to_supabase(result)
+                    # MODULARIDAD: Solo el módulo CrewAI guarda en Supabase
+                    # Este módulo solo se encarga de la comunicación con Pipefy
+                    logger.info(f"💾 Informe guardado por módulo CrewAI en tabla informe_cadastro")
                     
-                    # 2. Actualizar campo en Pipefy con el resumen del análisis
+                    # Actualizar campo en Pipefy con el resumen del análisis
+                    pipefy_updated = False
                     if summary_report:
-                        logger.info(f"📝 Actualizando campo Pipefy para case_id: {case_id}")
-                        # Nota: El field_id puede variar según la configuración del pipe
-                        # Comúnmente puede ser "observacoes_validacao_credito" o similar
-                        pipefy_updated = await update_pipefy_observacoes_field(case_id, summary_report)
+                        logger.info(f"📝 Actualizando campo 'Informe CrewAI' en Pipefy para case_id: {case_id}")
+                        pipefy_updated = await update_pipefy_informe_crewai_field(case_id, summary_report)
                         
                         if pipefy_updated:
-                            logger.info(f"✅ Campo Pipefy actualizado exitosamente para case_id: {case_id}")
+                            logger.info(f"✅ Campo 'Informe CrewAI' actualizado exitosamente para case_id: {case_id}")
                         else:
-                            logger.warning(f"⚠️ No se pudo actualizar campo Pipefy para case_id: {case_id}")
+                            logger.warning(f"⚠️ No se pudo actualizar campo 'Informe CrewAI' para case_id: {case_id}")
                     
                     return {
                         "status": "success",
                         "crewai_response": result,
-                        "supabase_saved": supabase_saved,
-                        "pipefy_updated": pipefy_updated if summary_report else False,
+                        "supabase_saved_by_crewai": True,  # Guardado por el módulo CrewAI
+                        "pipefy_updated": pipefy_updated,
                         "communication": "http_direct_sync",
                         "risk_score": analysis_result.get("risk_score"),
-                        "summary_report": summary_report
+                        "summary_report": summary_report,
+                        "architecture": "modular_separation"
                     }
                 else:
                     logger.warning(f"⚠️ Respuesta CrewAI incompleta para case_id: {case_id}")
@@ -686,76 +685,63 @@ async def handle_pipefy_webhook(request: Request, background_tasks: BackgroundTa
 
 # 🔔 WEBHOOK SUPABASE - Endpoint para recibir notificaciones de nuevos informes
 @app.post("/webhook/supabase/informe-created")
-async def handle_supabase_informe_webhook(
+async def webhook_supabase_informe_created(
     payload: SupabaseWebhookPayload,
-    background_tasks: BackgroundTasks,
-    request: Request
+    background_tasks: BackgroundTasks
 ):
     """
     Webhook que se activa cuando se crea un nuevo registro en la tabla 'informe_cadastro'.
-    Actualiza automáticamente el campo 'Observações da Validação Credito' en Pipefy.
+    Actualiza automáticamente el campo 'Informe CrewAI' en Pipefy.
     
     ARQUITECTURA MODULAR:
-    - Supabase detecta INSERT en informe_cadastro
-    - Dispara webhook automáticamente
-    - Este endpoint actualiza Pipefy
-    - Máximo desacoplamiento entre servicios
+    - CrewAI → Guarda informe en informe_cadastro
+    - Supabase → Detecta INSERT y dispara webhook
+    - Este módulo → Recibe webhook y actualiza Pipefy
+    - Resultado: Desacoplamiento total entre servicios
     """
     try:
         logger.info("🔔 Webhook Supabase recibido para nuevo informe")
         
-        # Validar que es un INSERT en la tabla correcta
+        # Validar que es un evento INSERT en la tabla correcta
         if payload.type != "INSERT":
-            logger.info(f"ℹ️ Webhook ignorado: tipo '{payload.type}' no es INSERT")
+            logger.warning(f"⚠️ Evento ignorado: {payload.type} (solo procesamos INSERT)")
             return {"status": "ignored", "reason": "not_insert_event"}
         
         if payload.table != "informe_cadastro":
-            logger.info(f"ℹ️ Webhook ignorado: tabla '{payload.table}' no es informe_cadastro")
+            logger.warning(f"⚠️ Tabla ignorada: {payload.table} (solo procesamos informe_cadastro)")
             return {"status": "ignored", "reason": "wrong_table"}
         
-        # Extraer datos del registro
+        # Extraer datos del nuevo registro
         record = payload.record
-        if not record:
-            logger.error("❌ No se encontró registro en el payload del webhook")
-            raise HTTPException(status_code=400, detail="Registro no encontrado en payload")
-        
         case_id = record.get("case_id")
-        summary_report = record.get("summary_report")
+        summary_report = record.get("summary_report", "")
         
         if not case_id:
             logger.error("❌ case_id no encontrado en el registro")
-            raise HTTPException(status_code=400, detail="case_id requerido")
-        
-        if not summary_report:
-            logger.warning("⚠️ summary_report vacío, usando informe completo")
-            summary_report = record.get("informe", "Informe generado por CrewAI")
+            return {"status": "error", "reason": "missing_case_id"}
         
         logger.info(f"📋 Procesando informe para case_id: {case_id}")
         
         # Actualizar Pipefy en background para no bloquear respuesta
         background_tasks.add_task(
-            update_pipefy_observacoes_field,
+            update_pipefy_informe_crewai_field,
             case_id,
             summary_report
         )
         
+        logger.info(f"🚀 Tarea de actualización Pipefy programada para case_id: {case_id}")
+        
         return {
             "status": "success",
-            "message": f"Webhook procesado para case_id {case_id}",
-            "service": "document_ingestion_service",
+            "message": "Webhook procesado exitosamente",
             "case_id": case_id,
-            "pipefy_update": "initiated_in_background",
-            "architecture": "event_driven_webhook",
-            "webhook_source": "supabase_database"
+            "pipefy_update_scheduled": True,
+            "architecture": "event_driven_modular"
         }
         
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"❌ ERRO inesperado en webhook Supabase: {e}")
-        import traceback
-        logger.error(f"TRACEBACK: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
+        logger.error(f"❌ Error procesando webhook Supabase: {e}")
+        return {"status": "error", "error": str(e)}
 
 # 🧪 ENDPOINT DE PRUEBA - Para probar la integración Pipefy manualmente
 @app.post("/test/update-pipefy-observacoes")
@@ -770,7 +756,7 @@ async def test_update_pipefy_observacoes(
     try:
         logger.info(f"🧪 Test: Actualizando Pipefy para case_id {case_id}")
         
-        success = await update_pipefy_observacoes_field(case_id, informe_content)
+        success = await update_pipefy_informe_crewai_field(case_id, informe_content)
         
         if success:
             return {
@@ -942,54 +928,6 @@ async def update_pipefy_card_field_alternative(card_id: str, field_id: str, new_
                 
     except Exception as e:
         logger.error(f"ERRO (método alternativo) ao atualizar campo Pipefy para card {card_id}: {e}")
-        return False
-
-async def save_analysis_to_supabase(analysis_result: Dict[str, Any]) -> bool:
-    """
-    Guarda el resultado del análisis en la tabla informe_cadastro de Supabase.
-    
-    Args:
-        analysis_result: Resultado del análisis de CrewAI
-    
-    Returns:
-        bool: True si se guardó exitosamente, False en caso contrario
-    """
-    if not supabase_client:
-        logger.error("ERRO: Cliente Supabase não inicializado.")
-        return False
-    
-    try:
-        # Extraer datos del resultado del análisis
-        result_data = analysis_result.get("analysis_result", {})
-        
-        # Preparar datos para inserción en tabla informe_cadastro
-        insert_data = {
-            "case_id": result_data.get("case_id"),
-            "informe": result_data.get("full_analysis_report", ""),
-            "risk_score": result_data.get("risk_score", "Médio"),
-            "risk_score_numeric": result_data.get("risk_score_numeric", 50),
-            "summary_report": result_data.get("summary_report", ""),
-            "documents_analyzed": result_data.get("documents_analyzed", 0),
-            "crewai_available": result_data.get("crewai_available", True),
-            "analysis_details": result_data.get("analysis_details", {}),
-            "status": "completed"
-        }
-        
-        # Insertar en Supabase - tabla correcta: informe_cadastro
-        def sync_insert():
-            return supabase_client.table("informe_cadastro").insert(insert_data).execute()
-        
-        result = await asyncio.get_event_loop().run_in_executor(None, sync_insert)
-        
-        if result.data:
-            logger.info(f"✅ Análisis guardado en Supabase (informe_cadastro) para case_id: {insert_data['case_id']}")
-            return True
-        else:
-            logger.error(f"❌ Error al guardar análisis en Supabase: {result}")
-            return False
-            
-    except Exception as e:
-        logger.error(f"ERRO ao salvar análisis en Supabase: {e}")
         return False
 
 if __name__ == "__main__":
