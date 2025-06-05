@@ -476,6 +476,8 @@ async def call_crewai_analysis_service(case_id: str, documents: List[Dict], chec
     Llama directamente al servicio CrewAI para análisis de documentos.
     MANTIENE LA MODULARIDAD: Solo llama al servicio, no guarda en Supabase.
     El módulo CrewAI se encarga de guardar el informe en la tabla informe_cadastro.
+    
+    MEJORADO: Maneja cold starts y timeouts de Render.
     """
     try:
         # Preparar payload para CrewAI
@@ -491,8 +493,23 @@ async def call_crewai_analysis_service(case_id: str, documents: List[Dict], chec
         logger.info(f"📄 Documentos a analizar: {len(documents)}")
         logger.info(f"🎯 URL CrewAI: {CREWAI_SERVICE_URL}/analyze/sync")
         
-        # Llamada HTTP directa al servicio CrewAI (endpoint síncrono)
-        async with httpx.AsyncClient(timeout=600.0) as client:  # 10 minutos timeout para análisis completo
+        # MEJORADO: Primero verificar que el servicio esté despierto
+        logger.info("🏥 Verificando estado del servicio CrewAI...")
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as health_client:
+                health_response = await health_client.get(f"{CREWAI_SERVICE_URL}/health")
+                if health_response.status_code == 200:
+                    logger.info("✅ Servicio CrewAI está activo")
+                else:
+                    logger.warning(f"⚠️ Servicio CrewAI respondió con status: {health_response.status_code}")
+        except Exception as health_error:
+            logger.warning(f"⚠️ No se pudo verificar estado del servicio: {health_error}")
+        
+        # Llamada HTTP directa al servicio CrewAI con timeout extendido para cold starts
+        logger.info("🚀 Iniciando análisis CrewAI (puede tardar si el servicio estaba dormido)...")
+        
+        # TIMEOUT AUMENTADO: 15 minutos para manejar cold starts + análisis completo
+        async with httpx.AsyncClient(timeout=900.0) as client:  
             response = await client.post(
                 f"{CREWAI_SERVICE_URL}/analyze/sync",
                 json=analysis_request.model_dump()
@@ -539,6 +556,53 @@ async def call_crewai_analysis_service(case_id: str, documents: List[Dict], chec
                         "crewai_response": result,
                         "communication": "http_direct_sync"
                     }
+            elif response.status_code == 502:
+                logger.error(f"🛌 Servicio CrewAI está dormido (502 Bad Gateway) - Reintentando en 30 segundos...")
+                
+                # RETRY PARA COLD STARTS: Esperar y reintentar una vez
+                await asyncio.sleep(30)
+                logger.info("🔄 Reintentando llamada a CrewAI después de cold start...")
+                
+                async with httpx.AsyncClient(timeout=900.0) as retry_client:
+                    retry_response = await retry_client.post(
+                        f"{CREWAI_SERVICE_URL}/analyze/sync",
+                        json=analysis_request.model_dump()
+                    )
+                    
+                    if retry_response.status_code == 200:
+                        result = retry_response.json()
+                        logger.info(f"✅ Análisis CrewAI completado exitosamente en reintento para case_id: {case_id}")
+                        
+                        if result.get("status") == "completed" and "analysis_result" in result:
+                            analysis_result = result["analysis_result"]
+                            summary_report = analysis_result.get("summary_report", "")
+                            
+                            logger.info(f"💾 Informe guardado por módulo CrewAI en tabla informe_cadastro")
+                            
+                            pipefy_updated = False
+                            if summary_report:
+                                logger.info(f"📝 Actualizando campo 'Informe CrewAI' en Pipefy para case_id: {case_id}")
+                                pipefy_updated = await update_pipefy_informe_crewai_field(case_id, summary_report)
+                            
+                            return {
+                                "status": "success_after_retry",
+                                "crewai_response": result,
+                                "supabase_saved_by_crewai": True,
+                                "pipefy_updated": pipefy_updated,
+                                "communication": "http_direct_sync_retry",
+                                "risk_score": analysis_result.get("risk_score"),
+                                "summary_report": summary_report,
+                                "architecture": "modular_separation",
+                                "cold_start_handled": True
+                            }
+                    
+                    logger.error(f"❌ Reintento falló: {retry_response.status_code} - {retry_response.text}")
+                    return {
+                        "status": "error_after_retry",
+                        "error": f"CrewAI service error after retry: {retry_response.status_code}",
+                        "details": retry_response.text,
+                        "communication": "http_direct_sync_retry_failed"
+                    }
             else:
                 logger.error(f"❌ Error en servicio CrewAI: {response.status_code} - {response.text}")
                 return {
@@ -550,10 +614,12 @@ async def call_crewai_analysis_service(case_id: str, documents: List[Dict], chec
                 
     except httpx.TimeoutException:
         logger.error(f"⏰ Timeout al llamar al servicio CrewAI para case_id: {case_id}")
+        logger.error("💡 Esto puede indicar que el servicio está en cold start. Considera usar el endpoint asíncrono.")
         return {
             "status": "timeout",
-            "error": "CrewAI service timeout",
-            "communication": "http_direct_sync"
+            "error": "CrewAI service timeout - posible cold start",
+            "communication": "http_direct_sync",
+            "suggestion": "El servicio puede estar dormido. Reintenta en unos minutos."
         }
     except Exception as e:
         logger.error(f"❌ Error al llamar al servicio CrewAI: {e}")
@@ -664,15 +730,25 @@ async def handle_pipefy_webhook(request: Request, background_tasks: BackgroundTa
             pipe_id
         )
 
+        logger.info(f"🚀 Tarea CrewAI programada en background para case_id: {card_id_str}")
+        logger.info(f"📊 Resumen del procesamiento:")
+        logger.info(f"   - Card ID: {card_id_str}")
+        logger.info(f"   - Pipe ID: {pipe_id}")
+        logger.info(f"   - Documentos procesados: {len(processed_documents)}")
+        logger.info(f"   - Checklist URL: {checklist_url}")
+        logger.info(f"   - Servicio CrewAI: {CREWAI_SERVICE_URL}")
+
         return {
             "status": "success",
             "message": f"Webhook para card {card_id_str} processado. {len(processed_documents)} documentos processados.",
             "service": "document_ingestion_service",
             "card_id": card_id_str,
+            "pipe_id": pipe_id,
             "documents_processed": len(processed_documents),
             "crewai_analysis": "initiated_in_background",
             "architecture": "modular_http_direct",
-            "communication": "http_direct"
+            "communication": "http_direct",
+            "cold_start_handling": "enabled"
         }
         
     except HTTPException:
@@ -788,7 +864,28 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Endpoint de verificação de saúde."""
+    """Endpoint de verificação de saúde con estado del servicio CrewAI."""
+    
+    # Verificar estado del servicio CrewAI
+    crewai_status = "unknown"
+    crewai_response_time = None
+    
+    try:
+        start_time = datetime.now()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{CREWAI_SERVICE_URL}/health")
+            end_time = datetime.now()
+            crewai_response_time = (end_time - start_time).total_seconds()
+            
+            if response.status_code == 200:
+                crewai_status = "healthy"
+            else:
+                crewai_status = f"unhealthy_status_{response.status_code}"
+    except httpx.TimeoutException:
+        crewai_status = "timeout"
+    except Exception as e:
+        crewai_status = f"error_{str(e)[:50]}"
+    
     return {
         "status": "healthy",
         "service": "document_ingestion_service",
@@ -796,8 +893,11 @@ async def health_check():
         "pipefy_configured": bool(PIPEFY_TOKEN),
         "storage_bucket": SUPABASE_STORAGE_BUCKET_NAME,
         "crewai_service": CREWAI_SERVICE_URL,
+        "crewai_status": crewai_status,
+        "crewai_response_time_seconds": crewai_response_time,
         "architecture": "modular_http_direct",
-        "communication": "http_direct"
+        "communication": "http_direct",
+        "cold_start_handling": "enabled"
     }
 
 async def update_pipefy_card_field(card_id: str, field_id: str, new_value: str) -> bool:
@@ -929,6 +1029,59 @@ async def update_pipefy_card_field_alternative(card_id: str, field_id: str, new_
     except Exception as e:
         logger.error(f"ERRO (método alternativo) ao atualizar campo Pipefy para card {card_id}: {e}")
         return False
+
+# 🔧 ENDPOINT DE UTILIDAD - Para despertar el servicio CrewAI
+@app.post("/utils/wake-crewai")
+async def wake_crewai_service():
+    """
+    Endpoint para despertar manualmente el servicio CrewAI.
+    Útil para evitar cold starts antes de procesar webhooks importantes.
+    """
+    try:
+        logger.info("🏥 Despertando servicio CrewAI...")
+        
+        start_time = datetime.now()
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.get(f"{CREWAI_SERVICE_URL}/health")
+            
+            end_time = datetime.now()
+            response_time = (end_time - start_time).total_seconds()
+            
+            if response.status_code == 200:
+                health_data = response.json()
+                logger.info(f"✅ Servicio CrewAI despertado exitosamente en {response_time:.2f}s")
+                
+                return {
+                    "status": "success",
+                    "message": "Servicio CrewAI está activo",
+                    "response_time_seconds": response_time,
+                    "crewai_health": health_data,
+                    "service_url": CREWAI_SERVICE_URL
+                }
+            else:
+                logger.warning(f"⚠️ Servicio CrewAI respondió con status: {response.status_code}")
+                return {
+                    "status": "warning",
+                    "message": f"Servicio respondió con status {response.status_code}",
+                    "response_time_seconds": response_time,
+                    "service_url": CREWAI_SERVICE_URL
+                }
+                
+    except httpx.TimeoutException:
+        logger.error("⏰ Timeout al despertar servicio CrewAI")
+        return {
+            "status": "timeout",
+            "message": "Servicio CrewAI no respondió en 60 segundos",
+            "service_url": CREWAI_SERVICE_URL
+        }
+    except Exception as e:
+        logger.error(f"❌ Error al despertar servicio CrewAI: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "service_url": CREWAI_SERVICE_URL
+        }
 
 if __name__ == "__main__":
     import uvicorn
