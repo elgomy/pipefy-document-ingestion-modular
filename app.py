@@ -217,6 +217,7 @@ async def get_pipefy_field_id_for_informe_crewai(card_id: str) -> Optional[str]:
 async def update_pipefy_informe_crewai_field(card_id: str, informe_content: str) -> bool:
     """
     Actualiza el campo 'Informe CrewAI' en Pipefy con el informe.
+    MEJORADO: Verifica la fase del card y lo mueve si es necesario.
     
     Args:
         card_id: ID del card de Pipefy
@@ -226,17 +227,50 @@ async def update_pipefy_informe_crewai_field(card_id: str, informe_content: str)
         bool: True si la actualización fue exitosa, False en caso contrario
     """
     try:
-        # Detectar automáticamente el field_id
-        field_id = await get_pipefy_field_id_for_informe_crewai(card_id)
-        if not field_id:
-            logger.error(f"❌ No se pudo encontrar el campo 'Informe CrewAI' para card {card_id}")
+        logger.info(f"📝 Iniciando actualización de campo 'Informe CrewAI' para card {card_id}")
+        
+        # PASO 1: Verificar fase actual y mover si es necesario
+        logger.info(f"🔍 Verificando fase actual del card {card_id}...")
+        phase_info = await get_card_current_phase_and_move_if_needed(card_id)
+        
+        if "error" in phase_info:
+            logger.error(f"❌ Error al verificar fase del card {card_id}: {phase_info}")
             return False
         
-        # Actualizar el campo
+        # Registrar información de la fase
+        current_phase_name = phase_info.get("current_phase_name", "Unknown")
+        moved = phase_info.get("moved", False)
+        status = phase_info.get("status", "unknown")
+        
+        logger.info(f"📍 Card {card_id} - Fase: {current_phase_name}, Movido: {moved}, Status: {status}")
+        
+        # Si se movió el card, esperar un momento para que se actualice
+        if moved:
+            logger.info(f"⏳ Esperando 3 segundos para que se complete el movimiento del card...")
+            await asyncio.sleep(3)
+        
+        # PASO 2: Detectar automáticamente el field_id
+        logger.info(f"🔍 Buscando campo 'Informe CrewAI' en card {card_id}...")
+        field_id = await get_pipefy_field_id_for_informe_crewai(card_id)
+        
+        if not field_id:
+            logger.error(f"❌ No se pudo encontrar el campo 'Informe CrewAI' para card {card_id}")
+            logger.error(f"   Fase actual: {current_phase_name}")
+            logger.error(f"   Card movido: {moved}")
+            logger.error(f"   Esto puede indicar que el campo no existe en esta fase o hay un problema de permisos")
+            return False
+        
+        logger.info(f"✅ Campo 'Informe CrewAI' encontrado con ID: {field_id}")
+        
+        # PASO 3: Actualizar el campo
+        logger.info(f"💾 Actualizando campo {field_id} con el informe...")
         success = await update_pipefy_card_field(card_id, field_id, informe_content)
         
         if success:
-            logger.info(f"✅ Campo 'Informe CrewAI' actualizado en Pipefy para card {card_id}")
+            logger.info(f"✅ Campo 'Informe CrewAI' actualizado exitosamente para card {card_id}")
+            logger.info(f"   Fase final: {current_phase_name}")
+            logger.info(f"   Card fue movido: {moved}")
+            logger.info(f"   Field ID usado: {field_id}")
         else:
             logger.error(f"❌ Error al actualizar campo en Pipefy para card {card_id}")
         
@@ -819,31 +853,63 @@ async def webhook_supabase_informe_created(
         logger.error(f"❌ Error procesando webhook Supabase: {e}")
         return {"status": "error", "error": str(e)}
 
-# 🧪 ENDPOINT DE PRUEBA - Para probar la integración Pipefy manualmente
-@app.post("/test/update-pipefy-observacoes")
-async def test_update_pipefy_observacoes(
+# 🧪 ENDPOINT DE PRUEBA - Para verificar fase del card y movimiento
+@app.post("/test/check-and-move-card")
+async def test_check_and_move_card(card_id: str):
+    """
+    Endpoint de prueba para verificar la fase actual del card y moverlo si es necesario.
+    Útil para testing del nuevo sistema de manejo de fases.
+    """
+    try:
+        logger.info(f"🧪 Test: Verificando fase y movimiento para card {card_id}")
+        
+        # Verificar fase actual y mover si es necesario
+        phase_info = await get_card_current_phase_and_move_if_needed(card_id)
+        
+        if "error" in phase_info:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Error al verificar fase del card: {phase_info}"
+            )
+        
+        return {
+            "status": "success",
+            "message": f"Verificación de fase completada para card {card_id}",
+            "phase_info": phase_info
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ ERRO en test endpoint: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
+
+# 🧪 ENDPOINT DE PRUEBA - Para probar la integración completa con movimiento de fase
+@app.post("/test/update-pipefy-with-phase-handling")
+async def test_update_pipefy_with_phase_handling(
     case_id: str,
     informe_content: str
 ):
     """
-    Endpoint de prueba para actualizar manualmente el campo Observações en Pipefy.
-    Útil para testing y debugging.
+    Endpoint de prueba para actualizar el campo Informe CrewAI con manejo automático de fases.
+    Incluye verificación de fase, movimiento si es necesario, y actualización del campo.
     """
     try:
-        logger.info(f"🧪 Test: Actualizando Pipefy para case_id {case_id}")
+        logger.info(f"🧪 Test: Actualización completa con manejo de fases para case_id {case_id}")
         
         success = await update_pipefy_informe_crewai_field(case_id, informe_content)
         
         if success:
             return {
                 "status": "success",
-                "message": f"Campo actualizado exitosamente para case_id {case_id}",
-                "case_id": case_id
+                "message": f"Campo actualizado exitosamente con manejo de fases para case_id {case_id}",
+                "case_id": case_id,
+                "feature": "automatic_phase_handling"
             }
         else:
             raise HTTPException(
                 status_code=500, 
-                detail=f"Error al actualizar campo para case_id {case_id}"
+                detail=f"Error al actualizar campo con manejo de fases para case_id {case_id}"
             )
             
     except HTTPException:
@@ -1082,6 +1148,189 @@ async def wake_crewai_service():
             "message": str(e),
             "service_url": CREWAI_SERVICE_URL
         }
+
+# 🔍 Función para detectar la fase actual del card y moverlo si es necesario
+async def get_card_current_phase_and_move_if_needed(card_id: str) -> Dict[str, Any]:
+    """
+    Detecta la fase actual del card y lo mueve a la fase de destino si es necesario.
+    
+    Args:
+        card_id: ID del card de Pipefy
+    
+    Returns:
+        Dict con información de la fase y si se movió el card
+    """
+    if not PIPEFY_TOKEN:
+        logger.error("ERRO: Token Pipefy não configurado.")
+        return {"error": "token_not_configured"}
+    
+    # Fases conocidas
+    FASE_ORIGEN_ID = "1130856059"  # Fase donde se origina el webhook
+    FASE_DESTINO_ID = "1131156124"  # Fase donde existe el campo "Informe CrewAI"
+    
+    query = """
+    query GetCardPhase($cardId: ID!) {
+        card(id: $cardId) {
+            id
+            current_phase {
+                id
+                name
+            }
+            pipe {
+                id
+                name
+            }
+        }
+    }
+    """
+    
+    variables = {"cardId": card_id}
+    headers = {
+        "Authorization": f"Bearer {PIPEFY_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "query": query,
+        "variables": variables
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post("https://api.pipefy.com/graphql", json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            if "errors" in data:
+                logger.error(f"ERRO GraphQL ao buscar fase do card: {data['errors']}")
+                return {"error": "graphql_error", "details": data['errors']}
+            
+            card_data = data.get("data", {}).get("card")
+            if not card_data:
+                logger.warning(f"Card {card_id} não encontrado.")
+                return {"error": "card_not_found"}
+            
+            current_phase = card_data.get("current_phase", {})
+            current_phase_id = current_phase.get("id")
+            current_phase_name = current_phase.get("name", "Unknown")
+            pipe_info = card_data.get("pipe", {})
+            
+            logger.info(f"📍 Card {card_id} está na fase: {current_phase_name} (ID: {current_phase_id})")
+            
+            result = {
+                "card_id": card_id,
+                "current_phase_id": current_phase_id,
+                "current_phase_name": current_phase_name,
+                "pipe_id": pipe_info.get("id"),
+                "pipe_name": pipe_info.get("name"),
+                "moved": False,
+                "target_phase_id": FASE_DESTINO_ID
+            }
+            
+            # Si ya está en la fase de destino, no necesita moverse
+            if current_phase_id == FASE_DESTINO_ID:
+                logger.info(f"✅ Card {card_id} ya está en la fase de destino ({current_phase_name})")
+                result["status"] = "already_in_target_phase"
+                return result
+            
+            # Si está en la fase de origen, moverlo a la fase de destino
+            if current_phase_id == FASE_ORIGEN_ID:
+                logger.info(f"🚀 Moviendo card {card_id} de fase origen a destino...")
+                move_success = await move_card_to_phase(card_id, FASE_DESTINO_ID)
+                
+                if move_success:
+                    logger.info(f"✅ Card {card_id} movido exitosamente a la fase de destino")
+                    result["moved"] = True
+                    result["status"] = "moved_to_target_phase"
+                    return result
+                else:
+                    logger.error(f"❌ Error al mover card {card_id} a la fase de destino")
+                    result["status"] = "move_failed"
+                    return result
+            
+            # Si está en otra fase, registrar pero no mover automáticamente
+            logger.warning(f"⚠️ Card {card_id} está en fase inesperada: {current_phase_name} (ID: {current_phase_id})")
+            result["status"] = "unexpected_phase"
+            return result
+            
+    except Exception as e:
+        logger.error(f"ERRO ao verificar fase do card {card_id}: {e}")
+        return {"error": "exception", "details": str(e)}
+
+# 🚀 Función para mover un card a una fase específica
+async def move_card_to_phase(card_id: str, target_phase_id: str) -> bool:
+    """
+    Mueve un card a una fase específica en Pipefy.
+    
+    Args:
+        card_id: ID del card a mover
+        target_phase_id: ID de la fase de destino
+    
+    Returns:
+        bool: True si el movimiento fue exitoso, False en caso contrario
+    """
+    if not PIPEFY_TOKEN:
+        logger.error("ERRO: Token Pipefy não configurado para mover card.")
+        return False
+    
+    mutation = """
+    mutation MoveCardToPhase($cardId: ID!, $destinationPhaseId: ID!) {
+        moveCardToPhase(input: {
+            card_id: $cardId,
+            destination_phase_id: $destinationPhaseId
+        }) {
+            card {
+                id
+                current_phase {
+                    id
+                    name
+                }
+            }
+            clientMutationId
+        }
+    }
+    """
+    
+    variables = {
+        "cardId": card_id,
+        "destinationPhaseId": target_phase_id
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {PIPEFY_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "query": mutation,
+        "variables": variables
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post("https://api.pipefy.com/graphql", json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            if "errors" in data:
+                logger.error(f"ERRO GraphQL ao mover card: {data['errors']}")
+                return False
+            
+            result = data.get("data", {}).get("moveCardToPhase", {})
+            moved_card = result.get("card", {})
+            
+            if moved_card:
+                new_phase = moved_card.get("current_phase", {})
+                new_phase_name = new_phase.get("name", "Unknown")
+                logger.info(f"✅ Card {card_id} movido exitosamente a fase: {new_phase_name}")
+                return True
+            else:
+                logger.error(f"❌ Error al mover card {card_id} - respuesta vacía")
+                return False
+                
+    except Exception as e:
+        logger.error(f"ERRO ao mover card {card_id} para fase {target_phase_id}: {e}")
+        return False
 
 if __name__ == "__main__":
     import uvicorn

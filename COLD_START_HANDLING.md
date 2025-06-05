@@ -24,24 +24,141 @@ elif response.status_code == 502:
     # Reintenta la llamada automáticamente
 ```
 
-### 3. **Health Check Previo**
-```python
-# Verificar que el servicio esté despierto antes de llamadas importantes
-async with httpx.AsyncClient(timeout=30.0) as health_client:
-    health_response = await health_client.get(f"{CREWAI_SERVICE_URL}/health")
-```
+### 3. **Health Check Mejorado**
+- Verifica estado del servicio CrewAI
+- Mide tiempo de respuesta
+- Detecta cold starts automáticamente
 
 ### 4. **Endpoint de Utilidad**
+- `/utils/wake-crewai`: Despierta el servicio CrewAI manualmente
+- Útil antes de procesar webhooks importantes
+
+### 5. **Script de Monitoreo**
+- `wake_services.py`: Script para despertar ambos servicios
+- Monitoreo automático de estado
+
+## Nuevo: Manejo Automático de Fases en Pipefy
+
+### Problema de Fases Identificado
+
+El campo "Informe CrewAI" solo existe en la **fase de destino** (ID: 1131156124) pero no en la **fase de origen** (ID: 1130856059), causando:
+
+- **Errores al actualizar campo**: Campo no encontrado en fase origen
+- **Webhooks fallidos**: No se puede actualizar el informe
+- **Flujo interrumpido**: El proceso se detiene sin completar la actualización
+
+### Solución Implementada: Movimiento Automático de Cards
+
+#### 1. **Detección Automática de Fase**
+```python
+async def get_card_current_phase_and_move_if_needed(card_id: str) -> Dict[str, Any]:
+    # Detecta la fase actual del card
+    # Mueve automáticamente a la fase de destino si es necesario
+    # Retorna información completa del proceso
+```
+
+#### 2. **Movimiento Inteligente**
+- **Fase Origen (1130856059)** → **Fase Destino (1131156124)** automáticamente
+- **Ya en destino**: No hace nada, procede directamente
+- **Otra fase**: Registra pero no mueve automáticamente
+
+#### 3. **Actualización Robusta**
+```python
+async def update_pipefy_informe_crewai_field(card_id: str, informe_content: str) -> bool:
+    # PASO 1: Verificar fase y mover si es necesario
+    # PASO 2: Buscar campo "Informe CrewAI"
+    # PASO 3: Actualizar campo con el informe
+```
+
+#### 4. **Endpoints de Prueba**
+- `/test/check-and-move-card`: Verifica fase y movimiento
+- `/test/update-pipefy-with-phase-handling`: Prueba completa con manejo de fases
+
+### Beneficios del Manejo de Fases
+
+1. **Automatización Completa**: No requiere intervención manual
+2. **Robustez**: Maneja cualquier fase de origen automáticamente
+3. **Logs Detallados**: Seguimiento completo del proceso
+4. **Modularidad**: Mantiene separación de responsabilidades
+5. **Escalabilidad**: Fácil agregar nuevas fases en el futuro
+
+## Comandos Útiles
+
+### Despertar Servicios
 ```bash
-# Despertar manualmente el servicio CrewAI
+# Despertar ambos servicios automáticamente
+python3 wake_services.py
+
+# Despertar solo CrewAI desde el servicio de ingestión
 curl -X POST https://pipefy-document-ingestion-modular.onrender.com/utils/wake-crewai
 ```
 
-### 5. **Script de Utilidad**
+### Verificar Estado
 ```bash
-# Despertar ambos servicios y verificar estado
-python3 wake_services.py
+# Health check del servicio de ingestión
+curl https://pipefy-document-ingestion-modular.onrender.com/health | python3 -m json.tool
+
+# Health check del servicio CrewAI
+curl https://pipefy-crewai-analysis-modular.onrender.com/health | python3 -m json.tool
 ```
+
+### Probar Manejo de Fases
+```bash
+# Verificar fase actual y mover si es necesario
+curl -X POST "https://pipefy-document-ingestion-modular.onrender.com/test/check-and-move-card?card_id=YOUR_CARD_ID"
+
+# Prueba completa con manejo de fases
+curl -X POST "https://pipefy-document-ingestion-modular.onrender.com/test/update-pipefy-with-phase-handling?case_id=YOUR_CARD_ID&informe_content=Test%20informe"
+```
+
+## Troubleshooting
+
+### Error 502 Bad Gateway
+1. **Causa**: Servicio dormido (cold start)
+2. **Solución Automática**: Retry después de 30 segundos
+3. **Solución Manual**: Usar `wake_services.py`
+
+### Campo "Informe CrewAI" No Encontrado
+1. **Causa**: Card en fase incorrecta
+2. **Solución Automática**: Movimiento automático a fase destino
+3. **Verificación**: Usar endpoint `/test/check-and-move-card`
+
+### Timeout en Análisis CrewAI
+1. **Causa**: Análisis muy largo + cold start
+2. **Solución**: Timeout extendido a 15 minutos
+3. **Prevención**: Despertar servicio antes de webhooks importantes
+
+### Logs para Debugging
+```bash
+# Ver logs en tiempo real (si tienes acceso a Render)
+# O usar los endpoints de health check para verificar estado
+
+# Verificar último informe guardado
+curl https://pipefy-crewai-analysis-modular.onrender.com/informes
+
+# Verificar informe específico
+curl https://pipefy-crewai-analysis-modular.onrender.com/informe/YOUR_CASE_ID
+```
+
+## Arquitectura Final Optimizada
+
+```
+📄 Webhook Pipefy (Fase Origen) → Módulo Ingestión
+                                      ↓
+🤖 CrewAI ← Llamada HTTP ← Módulo Ingestión
+    ↓
+💾 CrewAI guarda en informe_cadastro
+    ↓
+🔔 Supabase detecta INSERT → Webhook automático
+    ↓
+📍 Módulo Ingestión verifica fase del card
+    ↓
+🚀 Si está en fase origen → Mueve a fase destino automáticamente
+    ↓
+📝 Actualiza campo "Informe CrewAI" en Pipefy
+```
+
+**Resultado**: Sistema completamente automatizado que maneja cold starts, fases de Pipefy y actualizaciones de campos sin intervención manual.
 
 ## Uso Práctico
 
@@ -71,70 +188,6 @@ Respuesta incluye:
   "cold_start_handling": "enabled"
 }
 ```
-
-## Troubleshooting
-
-### Error 502 Bad Gateway
-**Causa**: Servicio dormido
-**Solución**: El sistema reintenta automáticamente después de 30 segundos
-
-### Timeout en Análisis
-**Causa**: Cold start + análisis largo
-**Solución**: Timeout extendido a 15 minutos
-
-### Webhook Falla
-**Causa**: Ambos servicios dormidos
-**Solución**: 
-1. Despertar servicios manualmente
-2. Reenviar webhook desde Pipefy
-3. O procesar manualmente el card
-
-## Logs de Debugging
-
-### Logs Normales (Servicio Activo)
-```
-🏥 Verificando estado del servicio CrewAI...
-✅ Servicio CrewAI está activo
-🚀 Iniciando análisis CrewAI...
-✅ Análisis CrewAI completado exitosamente
-```
-
-### Logs de Cold Start
-```
-🛌 Servicio CrewAI está dormido (502 Bad Gateway) - Reintentando en 30 segundos...
-🔄 Reintentando llamada a CrewAI después de cold start...
-✅ Análisis CrewAI completado exitosamente en reintento
-```
-
-### Logs de Error
-```
-⏰ Timeout al llamar al servicio CrewAI
-💡 Esto puede indicar que el servicio está en cold start
-```
-
-## Arquitectura Mejorada
-
-```
-📥 Webhook Pipefy
-    ↓
-🏥 Health Check CrewAI (30s timeout)
-    ↓
-🚀 Llamada CrewAI (900s timeout)
-    ↓ (si 502)
-⏳ Esperar 30s + Retry automático
-    ↓
-✅ Análisis completado
-    ↓
-📝 Actualizar Pipefy
-```
-
-## Beneficios
-
-1. **Robustez**: Maneja automáticamente cold starts
-2. **Transparencia**: Logs claros sobre el estado
-3. **Flexibilidad**: Endpoints de utilidad para control manual
-4. **Monitoreo**: Health checks mejorados
-5. **Modularidad**: Mantiene separación de responsabilidades
 
 ## Próximos Pasos
 
