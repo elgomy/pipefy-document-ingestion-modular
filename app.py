@@ -1332,6 +1332,330 @@ async def move_card_to_phase(card_id: str, target_phase_id: str) -> bool:
         logger.error(f"ERRO ao mover card {card_id} para fase {target_phase_id}: {e}")
         return False
 
+def create_informe_crewai_field_if_not_exists(phase_id):
+    """
+    Crea el campo 'Informe CrewAI' en la fase especificada si no existe.
+    
+    Args:
+        phase_id (str): ID de la fase donde crear el campo
+        
+    Returns:
+        dict: Resultado de la operación con success y field_id
+    """
+    try:
+        logger.info(f"🔧 Verificando si campo 'Informe CrewAI' existe en fase {phase_id}")
+        
+        # Primero verificar si el campo ya existe
+        existing_field_id = get_pipefy_field_id_for_informe_crewai(phase_id)
+        if existing_field_id:
+            logger.info(f"✅ Campo 'Informe CrewAI' ya existe con ID: {existing_field_id}")
+            return {
+                "success": True,
+                "field_id": existing_field_id,
+                "created": False,
+                "message": "Campo ya existía"
+            }
+        
+        # Si no existe, crear el campo
+        logger.info(f"🚀 Creando campo 'Informe CrewAI' en fase {phase_id}")
+        
+        mutation = """
+        mutation CreateInformeCrewAIField($phase_id: ID!, $label: String!, $type: ID!) {
+            createPhaseField(input: {
+                phase_id: $phase_id,
+                label: $label,
+                type: $type,
+                description: "Informe generado automáticamente por CrewAI con análisis de documentos",
+                required: false,
+                editable: true
+            }) {
+                phase_field {
+                    id
+                    label
+                    type
+                }
+            }
+        }
+        """
+        
+        variables = {
+            "phase_id": phase_id,
+            "label": "Informe CrewAI",
+            "type": "long_text"  # Tipo para texto largo según documentación
+        }
+        
+        headers = {
+            'Authorization': f'Bearer {PIPEFY_TOKEN}',
+            'Content-Type': 'application/json'
+        }
+        
+        response = requests.post(
+            PIPEFY_GRAPHQL_URL,
+            json={'query': mutation, 'variables': variables},
+            headers=headers,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if 'errors' in data:
+                logger.error(f"❌ Error GraphQL creando campo: {data['errors']}")
+                return {
+                    "success": False,
+                    "error": f"GraphQL errors: {data['errors']}",
+                    "created": False
+                }
+            
+            if data.get('data', {}).get('createPhaseField', {}).get('phase_field'):
+                field_info = data['data']['createPhaseField']['phase_field']
+                field_id = field_info['id']
+                
+                logger.info(f"✅ Campo 'Informe CrewAI' creado exitosamente!")
+                logger.info(f"   - ID: {field_id}")
+                logger.info(f"   - Label: {field_info['label']}")
+                logger.info(f"   - Type: {field_info['type']}")
+                
+                return {
+                    "success": True,
+                    "field_id": field_id,
+                    "created": True,
+                    "message": "Campo creado exitosamente"
+                }
+            else:
+                logger.error(f"❌ Respuesta inesperada al crear campo: {data}")
+                return {
+                    "success": False,
+                    "error": "Respuesta inesperada de la API",
+                    "created": False
+                }
+        else:
+            logger.error(f"❌ Error HTTP creando campo: {response.status_code} - {response.text}")
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}: {response.text}",
+                "created": False
+            }
+            
+    except Exception as e:
+        logger.error(f"❌ Excepción creando campo 'Informe CrewAI': {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "created": False
+        }
+
+def update_pipefy_informe_crewai_field_with_auto_creation(card_id, informe_content):
+    """
+    Actualiza el campo 'Informe CrewAI' en Pipefy, creando el campo automáticamente si no existe.
+    
+    Args:
+        card_id (str): ID del card en Pipefy
+        informe_content (str): Contenido del informe a actualizar
+        
+    Returns:
+        dict: Resultado de la operación
+    """
+    try:
+        logger.info(f"🔄 Iniciando actualización de campo 'Informe CrewAI' para card {card_id}")
+        
+        # PASO 1: Verificar fase actual y mover si es necesario
+        phase_result = get_card_current_phase_and_move_if_needed(card_id)
+        if not phase_result["success"]:
+            return {
+                "success": False,
+                "error": f"Error verificando/moviendo fase: {phase_result['error']}"
+            }
+        
+        current_phase_id = phase_result["current_phase_id"]
+        logger.info(f"📍 Card está en fase: {current_phase_id}")
+        
+        # PASO 2: Crear campo si no existe en la fase actual
+        field_creation_result = create_informe_crewai_field_if_not_exists(current_phase_id)
+        if not field_creation_result["success"]:
+            return {
+                "success": False,
+                "error": f"Error creando campo: {field_creation_result['error']}"
+            }
+        
+        field_id = field_creation_result["field_id"]
+        was_created = field_creation_result["created"]
+        
+        if was_created:
+            logger.info(f"🆕 Campo 'Informe CrewAI' fue creado automáticamente en fase {current_phase_id}")
+        else:
+            logger.info(f"✅ Campo 'Informe CrewAI' ya existía en fase {current_phase_id}")
+        
+        # PASO 3: Actualizar el campo con el contenido del informe
+        logger.info(f"📝 Actualizando campo {field_id} con informe...")
+        
+        mutation = """
+        mutation UpdateCardField($card_id: ID!, $field_id: ID!, $new_value: String!) {
+            updateCardField(input: {
+                card_id: $card_id,
+                field_id: $field_id,
+                new_value: $new_value
+            }) {
+                card {
+                    id
+                    title
+                }
+                success
+            }
+        }
+        """
+        
+        variables = {
+            "card_id": int(card_id),
+            "field_id": field_id,
+            "new_value": informe_content
+        }
+        
+        headers = {
+            'Authorization': f'Bearer {PIPEFY_TOKEN}',
+            'Content-Type': 'application/json'
+        }
+        
+        response = requests.post(
+            PIPEFY_GRAPHQL_URL,
+            json={'query': mutation, 'variables': variables},
+            headers=headers,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if 'errors' in data:
+                logger.error(f"❌ Error GraphQL actualizando campo: {data['errors']}")
+                return {
+                    "success": False,
+                    "error": f"GraphQL errors: {data['errors']}"
+                }
+            
+            if data.get('data', {}).get('updateCardField', {}).get('success'):
+                logger.info(f"✅ Campo 'Informe CrewAI' actualizado exitosamente!")
+                logger.info(f"   - Card ID: {card_id}")
+                logger.info(f"   - Field ID: {field_id}")
+                logger.info(f"   - Fase: {current_phase_id}")
+                logger.info(f"   - Campo creado automáticamente: {'Sí' if was_created else 'No'}")
+                
+                return {
+                    "success": True,
+                    "card_id": card_id,
+                    "field_id": field_id,
+                    "phase_id": current_phase_id,
+                    "field_created": was_created,
+                    "message": "Campo actualizado exitosamente"
+                }
+            else:
+                logger.error(f"❌ Fallo al actualizar campo: {data}")
+                return {
+                    "success": False,
+                    "error": f"Update failed: {data}"
+                }
+        else:
+            logger.error(f"❌ Error HTTP actualizando campo: {response.status_code} - {response.text}")
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}: {response.text}"
+            }
+            
+    except Exception as e:
+        logger.error(f"❌ Excepción actualizando campo 'Informe CrewAI': {str(e)}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@app.route('/supabase-webhook', methods=['POST'])
+def handle_supabase_webhook():
+    """
+    Maneja webhooks de Supabase cuando se inserta un nuevo informe en informe_cadastro.
+    Actualiza automáticamente el campo correspondiente en Pipefy.
+    """
+    try:
+        logger.info("🔔 Webhook de Supabase recibido")
+        
+        # Verificar que sea un evento de INSERT
+        data = request.get_json()
+        if not data:
+            logger.warning("⚠️ Webhook sin datos JSON")
+            return jsonify({"error": "No JSON data provided"}), 400
+        
+        event_type = data.get('type')
+        if event_type != 'INSERT':
+            logger.info(f"ℹ️ Evento ignorado: {event_type} (solo procesamos INSERT)")
+            return jsonify({"message": f"Event type {event_type} ignored"}), 200
+        
+        # Extraer datos del registro insertado
+        record = data.get('record', {})
+        case_id = record.get('case_id')
+        informe = record.get('informe')
+        status = record.get('status')
+        
+        if not case_id or not informe:
+            logger.warning(f"⚠️ Datos incompletos en webhook: case_id={case_id}, informe={'presente' if informe else 'ausente'}")
+            return jsonify({"error": "Missing case_id or informe"}), 400
+        
+        logger.info(f"📋 Procesando informe para case_id: {case_id}")
+        logger.info(f"   - Status: {status}")
+        logger.info(f"   - Longitud informe: {len(informe)} caracteres")
+        
+        # Actualizar campo en Pipefy con creación automática
+        update_result = update_pipefy_informe_crewai_field_with_auto_creation(case_id, informe)
+        
+        if update_result["success"]:
+            logger.info("✅ Webhook procesado exitosamente")
+            logger.info(f"   - Campo creado automáticamente: {'Sí' if update_result.get('field_created') else 'No'}")
+            
+            return jsonify({
+                "success": True,
+                "message": "Informe actualizado en Pipefy",
+                "case_id": case_id,
+                "field_created": update_result.get('field_created', False),
+                "phase_id": update_result.get('phase_id')
+            }), 200
+        else:
+            logger.error(f"❌ Error actualizando Pipefy: {update_result['error']}")
+            return jsonify({
+                "success": False,
+                "error": update_result['error'],
+                "case_id": case_id
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"❌ Error procesando webhook de Supabase: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/test/create-field-auto', methods=['POST'])
+def test_create_field_auto():
+    """
+    Endpoint de prueba para verificar la creación automática de campos.
+    """
+    try:
+        data = request.get_json()
+        card_id = data.get('card_id')
+        test_content = data.get('test_content', 'Contenido de prueba para campo creado automáticamente')
+        
+        if not card_id:
+            return jsonify({"error": "card_id es requerido"}), 400
+        
+        logger.info(f"🧪 Prueba de creación automática de campo para card: {card_id}")
+        
+        # Usar la nueva función con creación automática
+        result = update_pipefy_informe_crewai_field_with_auto_creation(card_id, test_content)
+        
+        return jsonify({
+            "test_result": result,
+            "card_id": card_id,
+            "test_content_length": len(test_content)
+        }), 200 if result["success"] else 500
+        
+    except Exception as e:
+        logger.error(f"❌ Error en prueba de creación automática: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8003)
