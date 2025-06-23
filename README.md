@@ -1,47 +1,127 @@
-<<<<<<< HEAD
-# 📄 Document Ingestion Service
+# Document Triaging Agent v2.0 - Arquitectura Modular
 
-Servicio modular para ingestión de documentos desde Pipefy hacia Supabase con comunicación HTTP directa.
+## 🏗️ Arquitectura Híbrida Inteligente
 
-## 🏗️ Arquitectura
+Este proyecto implementa un **enfoque híbrido inteligente** con dos servicios independientes desplegados en Render:
 
-- **Responsabilidad**: Procesar webhooks de Pipefy, descargar documentos y almacenarlos en Supabase
-- **Comunicación**: HTTP directa con el servicio CrewAI
-- **Puerto**: 8003
-- **Modularidad**: Servicio independiente y desacoplado
+### 🔧 Backend API Completo (`pipefy-document-ingestion-v2`)
+**Responsabilidad:** Contiene TODA la lógica de negocio
+- ✅ Procesamiento de webhooks de Pipefy
+- ✅ Integración con APIs externas (CNPJá, Twilio, BrasilAPI)
+- ✅ Gestión completa de Supabase (Storage + Database)
+- ✅ Orquestación de flujos de trabajo
+- ✅ Sistema de métricas y error handling
+- ✅ Endpoints HTTP simples para el agente
+
+### 🤖 Agente CrewAI Enfocado (`pipefy-crewai-analysis-v2`)
+**Responsabilidad:** Solo análisis con IA usando herramientas simples
+- ✅ Análisis de documentos con IA
+- ✅ Herramientas súper simples que llaman al backend
+- ✅ NO contiene lógica de APIs externas
+- ✅ Enfocado únicamente en razonamiento y análisis
 
 ## 🚀 Despliegue en Render
 
-### Variables de Entorno Requeridas:
-- `SUPABASE_URL`: URL de tu proyecto Supabase
-- `SUPABASE_SERVICE_KEY`: Service key de Supabase
-- `PIPEFY_TOKEN`: Token de API de Pipefy
-- `PIPEFY_WEBHOOK_SECRET`: Secret para validar webhooks (opcional)
-- `SUPABASE_STORAGE_BUCKET_NAME`: Nombre del bucket (default: documents)
-- `CREWAI_SERVICE_URL`: URL del servicio CrewAI en Render
-
-### Comando de Inicio:
+### Servicio 1: Backend API
 ```bash
-uvicorn fastAPI_modular_http:app --host 0.0.0.0 --port $PORT
+# En pipefy-document-ingestion-v2/
+# URL: https://pipefy-document-ingestion-v2.onrender.com
+# Puerto: 8000
+# Endpoints principales:
+# - POST /webhook/pipefy (punto de entrada principal)
+# - POST /api/v1/cliente/enriquecer
+# - GET /api/v1/documentos/{case_id}
+# - POST /api/v1/whatsapp/enviar
 ```
 
-## 📋 Endpoints
+### Servicio 2: Agente CrewAI
+```bash
+# En pipefy-crewai-analysis-v2/
+# URL: https://pipefy-crewai-analysis-v2.onrender.com
+# Puerto: 8001
+# Endpoints principales:
+# - POST /analyze (análisis de documentos)
+# - GET /health
+```
 
-- `POST /webhook/pipefy` - Recibe webhooks de Pipefy
-- `GET /health` - Health check
-- `GET /` - Información del servicio
+## 🔄 Flujo de Trabajo
 
-## 🔗 Comunicación
+1. **Webhook de Pipefy** → `pipefy-document-ingestion-v2` (puerto 8000)
+2. **Backend procesa** documentos y datos de negocio
+3. **Backend llama** al agente CrewAI cuando necesita análisis
+4. **Agente usa herramientas simples** que llaman de vuelta al backend
+5. **Backend actualiza** Pipefy y envía notificaciones
 
-Este servicio se comunica con:
-- **Pipefy**: Recibe webhooks y consulta API GraphQL
-- **Supabase**: Almacena documentos y metadatos
-- **CrewAI Service**: Envía documentos para análisis via HTTP
+## 🛠️ Configuración de Variables de Entorno
 
-## 📦 Dependencias
+### Para pipefy-document-ingestion-v2:
+```bash
+SUPABASE_URL=your_supabase_url
+SUPABASE_ANON_KEY=your_supabase_key
+PIPEFY_TOKEN=your_pipefy_token
+PIPEFY_WEBHOOK_SECRET=your_webhook_secret
+TWILIO_ACCOUNT_SID=your_twilio_sid
+TWILIO_AUTH_TOKEN=your_twilio_token
+CNPJA_API_KEY=your_cnpja_key
+CREWAI_SERVICE_URL=https://pipefy-crewai-analysis-v2.onrender.com
+```
 
-Ver `requirements.txt` para la lista completa de dependencias. 
-=======
-# pipefy-document-ingestion-modular
- Servicio modular de ingestión de documentos Pipefy-Supabase con comunicación HTTP directa
->>>>>>> 7f9eb48a7ab55d3b3ddf935a6d974519d33014d4
+### Para pipefy-crewai-analysis-v2:
+```bash
+OPENAI_API_KEY=your_openai_key
+DOCUMENT_INGESTION_URL=https://pipefy-document-ingestion-v2.onrender.com
+```
+
+## 📁 Estructura del Proyecto
+
+```
+Pipefy-Render-Supabase-CrewAI_cadastro/
+├── pipefy-document-ingestion-v2/     # 🔧 Backend API Completo
+│   ├── app.py                        # FastAPI con toda la lógica
+│   ├── src/                          # Servicios y utilidades
+│   ├── render.yaml                   # Configuración Render
+│   └── requirements.txt              # Dependencias
+├── pipefy-crewai-analysis-v2/        # 🤖 Agente CrewAI Enfocado
+│   ├── app.py                        # FastAPI para análisis
+│   ├── src/tools/                    # Herramientas simples
+│   ├── render.yaml                   # Configuración Render
+│   └── requirements.txt              # Dependencias
+└── scripts/                          # Scripts de desarrollo
+```
+
+## 🎯 Ventajas de esta Arquitectura
+
+1. **Modularidad Máxima**: Cada servicio tiene responsabilidades claras
+2. **Escalabilidad**: Servicios independientes pueden escalar por separado
+3. **Flexibilidad**: Cambios en APIs externas solo afectan el backend
+4. **Mantenibilidad**: Código más limpio y fácil de debuggear
+5. **Testabilidad**: Cada componente se puede probar independientemente
+
+## 🔧 Desarrollo Local
+
+### Backend API:
+```bash
+cd pipefy-document-ingestion-v2
+pip install -r requirements.txt
+uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### Agente CrewAI:
+```bash
+cd pipefy-crewai-analysis-v2
+pip install -r requirements.txt
+uvicorn app:app --host 0.0.0.0 --port 8001 --reload
+```
+
+## 📊 Monitoreo
+
+Cada servicio expone su propio endpoint `/health` para monitoreo independiente:
+- Backend API: `https://pipefy-document-ingestion-v2.onrender.com/health`
+- Agente CrewAI: `https://pipefy-crewai-analysis-v2.onrender.com/health`
+
+## 🚀 Estado del Proyecto
+
+- ✅ **Task 12**: Arquitectura Modular - **COMPLETADA**
+- ⏳ **Próxima**: Integration and End-to-End Tests
+
+La arquitectura híbrida está lista para validación con tests de integración entre servicios.

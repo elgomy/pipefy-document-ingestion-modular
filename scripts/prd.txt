@@ -1,0 +1,270 @@
+De acuerdo. Entiendo la necesidad de un documento formal y estructurado que sirva como guía definitiva para el desarrollo, especialmente si se va a entregar a un agente de IA como Cursor.
+
+A continuación, presento el Product Requirements Document (PRD) completo para el **Agente de Triagem Documental v2.0**, incorporando tus últimos ajustes y siguiendo la estructura solicitada.
+
+\<PRD\>
+
+# Product Requirements Document: Agente de Triagem Documental v2.0
+
+### 1\. Introduction
+
+Este documento proporciona una descripción detallada de los requisitos para el desarrollo de la versión 2.0 del **Agente de Triagem Documental**. El propósito de este proyecto es mejorar y automatizar la fase inicial de análisis de documentos en el proceso de `cadastro` de clientes de la FIDC.
+
+Este PRD servirá como la fuente única de verdad para el equipo de desarrollo, delineando el alcance, las características y los criterios de éxito del proyecto.
+
+**Nota Importante para el Desarrollo:** El enfoque de esta fase del proyecto es 100% en el perfeccionamiento del `triagem_agente`. Los agentes previamente conceptualizados (`extrator_agente` y `risco_agente`) quedan en **stand-by** y su desarrollo no forma parte del alcance de este documento.
+
+### 2\. Product overview
+
+El "Pipefy Document Analysis Platform" es una solución modular de software diseñada para automatizar y optimizar el proceso de análisis de riesgo y cumplimiento para nuevos clientes (cedentes). Integrando Pipefy como interfaz de usuario, Supabase como backend de datos, y CrewAI como cerebro de análisis, la plataforma tiene como objetivo reducir drásticamente el trabajo manual, minimizar errores humanos y acelerar el tiempo de aprobación de los cadastros.
+
+Este feature específico, "Agente de Triagem Documental v2.0", se centra en la primera y más crítica etapa del flujo: la validación de que toda la documentación enviada por el cliente está completa y cumple con los requisitos del checklist.
+
+### 3\. Goals and objectives
+
+El objetivo principal de este feature es transformar la triagem documental de un proceso manual y lento a un flujo automatizado, inteligente y eficiente.
+
+  * **Objetivo 1:** Automatizar completamente la clasificación de los casos entrantes, moviendo automáticamente cada card de Pipefy a la fase correcta según la calidad de su documentación.
+  * **Objetivo 2:** Reducir el tiempo del ciclo de la fase de triagem en un 80%, pasando de días a minutos.
+  * **Objetivo 3:** Eliminar en un 95% los casos devueltos por el "Fundo Singulare" debido a errores documentales básicos.
+  * **Objetivo 4:** Mejorar la eficiencia del equipo (comercial y de cadastro) proveyendo información clara, instantánea y accionable.
+
+### 4\. Target audience
+
+  * **Equipe de Cadastro:** Son los usuarios primarios que se beneficiarán de la automatización. En lugar de revisar manualmente cada documento, recibirán casos pre-clasificados, enfocándose solo en aquellos que requieren acciones internas específicas (como la emisión de documentos).
+  * **Gestor Comercial:** Son los usuarios que necesitan ser notificados de forma inmediata cuando una acción de su parte (o del cliente) es requerida para desbloquear un proceso. La notificación automática les permitirá actuar con mayor agilidad.
+
+### 5\. Features and requirements
+
+  * **FR-01: Clasificación Automatizada de Casos:** El sistema debe analizar la documentación y clasificar cada caso en una de tres categorías: `Aprovado`, `Pendencia_Bloqueante`, o `Pendencia_NaoBloqueante`.
+  * **FR-02: Movimiento Automático de Cards en Pipefy:** Basado en la clasificación del FR-01, el sistema debe mover el card de Pipefy a la fase correspondiente:
+      * `Aprovado` → Fase "Aprovado" (ID: `338000018`)
+      * `Pendencia_Bloqueante` → Fase "Pendências Documentais" (ID: `338000017`)
+      * `Pendencia_NaoBloqueante` → Fase "Emitir documentos" (ID: `338000019`)
+  * **FR-03: Generación de Informe Detallado:** El agente de IA debe generar un informe en formato Markdown que detalle el estado de cada ítem del checklist y explique claramente cada pendencia encontrada.
+  * **FR-04: Actualización de Campo en Pipefy:** El informe generado (FR-03) debe ser insertado en el campo de Pipefy con ID **`informe_triagem_crewai`**.
+  * **FR-05: Notificación Automática por WhatsApp:** Para los casos clasificados como `Pendencia_Bloqueante`, el sistema debe enviar una notificación vía WhatsApp al gestor comercial responsable.
+  * **FR-06: Generación Automática de `Cartão CNPJ`:** Para los casos clasificados como `Pendencia_NaoBloqueante` donde el `Cartão CNPJ` esté ausente o desactualizado, el sistema debe intentar generar el documento automáticamente usando la API de CNPJá.
+  * **FR-07: Toma de Decisiones Basada en Conocimiento:** El agente de IA debe basar sus decisiones en dos fuentes principales: el contenido del checklist activo (obtenido de la tabla `checklist_config` en Supabase) y el `FAQ.pdf` (cargado en la `KnowledgeBase` de CrewAI).
+
+### 6\. User stories and acceptance criteria
+
+| ID | User Story | Acceptance Criteria |
+| :--- | :--- | :--- |
+| **ST-101** | Como miembro de la `Equipe de Cadastro`, quiero que los casos con toda la documentación correcta sean movidos automáticamente a la fase "Aprovado", para poder enfocarme en los casos que realmente necesitan mi atención. | 1. Un card con documentos 100% conformes se mueve de la fase "Triagem Documentos AI" a la fase "Aprovado" (ID: `338000018`).\<br\>2. El campo `informe_triagem_crewai` se actualiza con un mensaje de éxito. |
+| **ST-102** | Como `Gestor Comercial`, quiero ser notificado instantáneamente por WhatsApp cuando un caso que envié tiene un problema crítico que debo resolver, para poder contactar al cliente rápidamente. | 1. Un card con una pendencia bloqueante se mueve a la fase "Pendências Documentais" (ID: `338000017`).\<br\>2. Se envía un mensaje de WhatsApp al número configurado.\<br\>3. El campo `informe_triagem_crewai` contiene el detalle del error. |
+| **ST-103** | Como miembro de la `Equipe de Cadastro`, quiero que los casos con pendencias que podemos resolver internamente (como un `Cartão CNPJ` desactualizado) sean movidos a una cola de trabajo específica ("Emitir documentos"), para saber exactamente qué documentos necesito generar. | 1. Un card con una pendencia no bloqueante se mueve a la fase "Emitir documentos" (ID: `338000019`).\<br\>2. El sistema intenta ejecutar las acciones automáticas (como generar el `Cartão CNPJ`).\<br\>3. El campo `informe_triagem_crewai` detalla las acciones automáticas tomadas y/o las que se deben realizar manualmente. |
+| **ST-104** | Como Administrador del Sistema, quiero que toda la comunicación entre servicios (Ingestión, CrewAI, Pipefy, Supabase, etc.) sea autenticada mediante tokens seguros para prevenir accesos no autorizados. | 1. Todas las claves de API (Pipefy, Supabase, Twilio, CNPJá, OpenAI) se cargan desde variables de entorno y no están hardcodeadas en el código.\<br\>2. Las llamadas entre servicios internos (Ingestión a CrewAI) están protegidas. |
+| **ST-105** | Como Desarrollador, necesito que la tabla `checklist_config` en Supabase esté estructurada para contener el contenido del checklist activo, de modo que el sistema pueda obtener las reglas de negocio dinámicamente sin necesidad de un redespliegue. | 1. La tabla `checklist_config` existe en Supabase con los campos `name` (TEXT), `checklist_content` (JSONB), y `is_active` (BOOLEAN).\<br\>2. El Servicio de Ingestión puede conectarse y obtener con éxito el contenido del checklist donde `is_active = true`. |
+| **ST-106** | Como Administrador del Sistema, quiero que el sistema maneje fallos en las APIs externas (ej. Twilio o CNPJá están caídos) de forma elegante, registrando el error y notificando al equipo de operaciones para asegurar que ningún caso se pierda o quede en un estado inconsistente. | 1. Si una llamada a una API externa (Twilio, CNPJá) falla, el error se registra en los logs de Render.\<br\>2. El card de Pipefy se actualiza con un comentario indicando el fallo de la automatización.\<br\>3. El card NO se mueve o se mueve a una fase específica de "Error de Automatización" para revisión manual. |
+
+### 7\. Technical requirements / Stack
+
+  * **Lenguaje:** Python 3.11+
+  * **Frameworks:** FastAPI (para los servicios web), CrewAI (para la orquestación de agentes).
+  * **Plataforma de Despliegue:** Render.
+  * **Backend de Datos:** Supabase (PostgreSQL y Storage).
+  * **APIs Externas:**
+      * Pipefy (GraphQL API)
+      * OpenAI (API de LLM)
+      * LlamaCloud (API de LlamaParse)
+      * Twilio (Messaging API para WhatsApp)
+      * CNPJá (API para generación de documentos)
+
+### 8\. Design and user interface
+
+La interfaz de usuario principal para este feature sigue siendo el tablero Kanban de **Pipefy**. No se requiere el desarrollo de una nueva interfaz gráfica. Los cambios de UI se limitan a:
+
+  * La creación de la nueva fase **"Emitir documentos"** en el pipe.
+  * La población automática del campo de tipo "Texto Longo" **`informe_triagem_crewai`** con el resultado del análisis del agente.
+
+\</PRD\>
+
+-----
+
+### **Anexo: Código Sugerido para Implementación**
+
+¡Claro! A continuación, te proporciono el código detallado para las funciones de ayuda que necesita el **Servicio de Ingestión**.
+
+Este código está diseñado para ser modular y puede ser ubicado en un archivo como `integrations.py` o `utils.py` dentro de tu proyecto `pipefy-document-ingestion-modular`. Incluye el manejo de errores básicos y utiliza las variables de entorno como se definió en la arquitectura.
+
+---
+
+### **Código de Funciones de Ayuda para el Servicio de Ingestión**
+
+```python
+import os
+import httpx
+from twilio.rest import Client
+# Asumimos que tienes un cliente de Supabase inicializado en alguna parte de tu aplicación
+# from your_app.supabase import supabase_client 
+
+# --- Constantes de Configuración ---
+PIPEFY_API_URL = "https://api.pipefy.com/graphql"
+PIPEFY_TOKEN = os.environ.get("PIPEFY_TOKEN")
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
+TWILIO_WHATSAPP_NUMBER = os.environ.get("TWILIO_WHATSAPP_NUMBER", "+17245586619")
+CNPJA_API_KEY = os.environ.get("CNPJA_API_KEY")
+CNPJA_API_URL = "https://api.cnpja.com/rfb/certificate"
+
+# IDs de Fases y Campos de Pipefy
+FIELD_ID_INFORME_TRIAGEM = "informe_triagem_crewai"
+
+# --- Funciones de Integración con Pipefy ---
+
+def move_pipefy_card(card_id: str, phase_id: str):
+    """
+    Mueve un card de Pipefy a una fase específica usando la API GraphQL.
+    
+    Args:
+        card_id (str): El ID del card a mover.
+        phase_id (str): El ID de la fase de destino.
+    """
+    mutation = """
+    mutation($cardId: ID!, $phaseId: ID!) {
+      moveCardToPhase(input: {card_id: $cardId, destination_phase_id: $phaseId}) {
+        card {
+          id
+          title
+          current_phase {
+            id
+            name
+          }
+        }
+      }
+    }
+    """
+    variables = {"cardId": str(card_id), "phaseId": str(phase_id)}
+    headers = {"Authorization": f"Bearer {PIPEFY_TOKEN}", "Content-Type": "application/json"}
+    
+    try:
+        with httpx.Client() as client:
+            response = client.post(PIPEFY_API_URL, json={"query": mutation, "variables": variables}, headers=headers, timeout=30)
+            response.raise_for_status()
+            result = response.json()
+            if result.get("errors"):
+                print(f"ERRO da API Pipefy ao mover card {card_id}: {result['errors']}")
+            else:
+                new_phase = result['data']['moveCardToPhase']['card']['current_phase']['name']
+                print(f"Card {card_id} movido com sucesso para a fase '{new_phase}' (ID: {phase_id}).")
+    except httpx.HTTPStatusError as e:
+        print(f"ERRO HTTP ao mover card {card_id} no Pipefy: {e.response.status_code} - {e.response.text}")
+    except Exception as e:
+        print(f"ERRO inesperado ao mover card {card_id}: {e}")
+
+def update_pipefy_field(card_id: str, field_id: str, value: str):
+    """
+    Actualiza el valor de un campo específico en un card de Pipefy.
+    
+    Args:
+        card_id (str): El ID del card a actualizar.
+        field_id (str): El ID del campo a modificar (ej. "informe_triagem_crewai").
+        value (str): El nuevo valor para el campo (el informe en Markdown).
+    """
+    mutation = """
+    mutation($cardId: ID!, $fieldId: ID!, $newValue: JSON!) {
+      updateCardField(input: {card_id: $cardId, field_id: $fieldId, value: $newValue}) {
+        card {
+          id
+        }
+        success
+      }
+    }
+    """
+    variables = {"cardId": str(card_id), "fieldId": field_id, "newValue": value}
+    headers = {"Authorization": f"Bearer {PIPEFY_TOKEN}", "Content-Type": "application/json"}
+    
+    try:
+        with httpx.Client() as client:
+            response = client.post(PIPEFY_API_URL, json={"query": mutation, "variables": variables}, headers=headers, timeout=30)
+            response.raise_for_status()
+            result = response.json()
+            if result.get("errors"):
+                print(f"ERRO da API Pipefy ao atualizar campo {field_id} no card {card_id}: {result['errors']}")
+            elif result.get("data", {}).get("updateCardField", {}).get("success"):
+                print(f"Campo '{field_id}' do card {card_id} atualizado com sucesso.")
+            else:
+                print(f"Falha ao atualizar campo {field_id} no card {card_id}. Resposta: {result}")
+
+    except httpx.HTTPStatusError as e:
+        print(f"ERRO HTTP ao atualizar campo no card {card_id}: {e.response.status_code} - {e.response.text}")
+    except Exception as e:
+        print(f"ERRO inesperado ao atualizar campo no card {card_id}: {e}")
+
+# --- Funciones de Integración con APIs de Terceros ---
+
+def send_whatsapp_notification(card_id: str, relatorio: str):
+    """
+    Envia una notificación de pendencia bloqueante vía Twilio.
+    
+    Args:
+        card_id (str): ID del card para incluir en el mensaje.
+        relatorio (str): El informe de la IA para resumir en el mensaje.
+    """
+    # TODO: Implementar lógica para obtener el teléfono del gestor a partir del card_id.
+    # Esta información podría estar en un campo del card o en una base de datos de usuarios.
+    numero_gestor_exemplo = "+553199999999"  # Placeholder - ¡USAR NÚMERO REAL PARA PRUEBAS!
+    
+    if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN]):
+        print("ERRO: Credenciais da Twilio não configuradas. Notificação não enviada.")
+        return
+
+    try:
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        message_body = (
+            f"🚨 Pendência Crítica no Pipefy!\n\n"
+            f"Card: https://app.pipefy.com/open-cards/{card_id}\n\n"
+            f"Resumo da Pendência: {relatorio[:200]}...\n\n"
+            f"Por favor, verifique o card para detalhes e ação necessária."
+        )
+        message = client.messages.create(
+            from_=f"whatsapp:{TWILIO_WHATSAPP_NUMBER}",
+            body=message_body,
+            to=f'whatsapp:{numero_gestor_exemplo}'
+        )
+        print(f"Notificação de WhatsApp enviada para {numero_gestor_exemplo}. SID: {message.sid}")
+    except Exception as e:
+        print(f"ERRO CRÍTICO ao enviar WhatsApp via Twilio: {e}")
+
+def gerar_e_armazenar_cartao_cnpj(case_id: str, cnpj: str):
+    """
+    Genera el Cartão CNPJ usando la API de CNPJá y lo almacena en Supabase.
+    
+    Args:
+        case_id (str): El ID del caso, usado para nombrar el archivo.
+        cnpj (str): El número del CNPJ (solo dígitos).
+    """
+    print(f"Iniciando geração de Cartão CNPJ para {cnpj} no caso {case_id}...")
+    if not CNPJA_API_KEY:
+        print("ERRO: API Key da CNPJá não configurada. Geração de documento cancelada.")
+        return
+
+    headers = {'Authorization': CNPJA_API_KEY}
+    params = {'taxId': cnpj, 'pages': 'REGISTRATION'}
+    
+    try:
+        with httpx.Client() as client:
+            response = client.get(CNPJA_API_URL, params=params, headers=headers, timeout=60)
+            response.raise_for_status()
+            pdf_content = response.content
+
+            print(f"PDF do Cartão CNPJ obtido com sucesso ({len(pdf_content)} bytes).")
+
+            # --- Lógica de Upload para Supabase ---
+            # TODO: Asegurarse de que el cliente de Supabase esté inicializado.
+            # file_path = f"{case_id}/cartao_cnpj_gerado_auto.pdf"
+            # response = supabase_client.storage.from_('documents').upload(file_path, pdf_content, {"content-type": "application/pdf"})
+            
+            # TODO: Añadir el nuevo documento a la tabla 'documents' de Supabase
+            # new_document_url = supabase_client.storage.from_('documents').get_public_url(file_path)
+            # supabase_client.table('documents').insert({ "case_id": case_id, "file_name": "cartao_cnpj_gerado_auto.pdf", "file_url": new_document_url, ... })
+            
+            print(f"Simulação: Upload do Cartão CNPJ para Supabase Storage e registro na DB concluídos.")
+
+    except httpx.HTTPStatusError as e:
+        print(f"ERRO HTTP ao chamar API da CNPJá: {e.response.status_code} - {e.response.text}")
+    except Exception as e:
+        print(f"ERRO inesperado ao gerar Cartão CNPJ: {e}")
+
+```

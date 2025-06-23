@@ -1,0 +1,119 @@
+# PRD - Flujo Completo de Triagem Documental v2.0
+
+## Contexto del Proyecto
+Este PRD define la implementación del flujo completo de triagem documental que se integrará con el proyecto existente "Pipefy Document Analysis Platform" que ya tiene 12 tareas completadas. Las nuevas funcionalidades se construirán sobre la base existente de servicios, integraciones y documentación ya implementados.
+
+## Objetivo Principal
+Implementar el flujo completo de procesamiento de documentos desde Pipefy hasta el análisis con CrewAI y actualización automática de resultados, utilizando la arquitectura modular ya establecida en los proyectos pipefy-document-ingestion-modular y pipefy-crewai-analysis-modular como referencia.
+
+## Arquitectura del Sistema
+
+### Servicios Involucrados
+1. **pipefy-document-ingestion-v2**: Servicio de ingestión de documentos (ya existe, necesita webhook handler)
+2. **pipefy-crewai-analysis-v2**: Servicio de análisis CrewAI (ya existe, necesita triagem_agente)
+
+### Flujo de Datos
+1. Webhook de Pipefy (fase 338000020) → Servicio de Ingestión v2
+2. Descarga y almacenamiento de documentos en Supabase bucket 'documents'
+3. Registro de metadatos en tabla 'documents' con case_id = card_id
+4. Llamada HTTP al Servicio CrewAI v2 con payload estructurado
+5. Análisis con triagem_agente especializado usando LlamaParse para todos los documentos
+6. Almacenamiento de resultados en tabla 'informe_cadastro'
+7. Webhook de Supabase → Actualización automática del campo "Informe CrewAI" en Pipefy
+
+## Especificaciones Técnicas
+
+### Servicio de Ingestión v2 (pipefy-document-ingestion-v2)
+- **Endpoint webhook**: POST /webhook/pipefy
+- **Funcionalidades requeridas**:
+  - Recepción y validación de webhooks de Pipefy
+  - Descarga de documentos desde URLs de Pipefy
+  - Almacenamiento en Supabase Storage (bucket 'documents')
+  - Registro en tabla 'documents' con metadatos completos
+  - Comunicación HTTP con servicio CrewAI v2
+  - Manejo de webhook de Supabase para actualización de Pipefy
+
+### Servicio CrewAI v2 (pipefy-crewai-analysis-v2)
+- **Endpoint principal**: POST /analyze
+- **Agente especializado**: triagem_agente
+- **Funcionalidades requeridas**:
+  - Configuración completa de CrewAI con agente especializado
+  - Integración con LlamaParse para procesamiento de documentos
+  - Consulta a base de conocimiento (FAQ.pdf)
+  - Validación contra checklist dinámico desde Supabase
+  - Generación de análisis estructurado en JSON
+  - Almacenamiento de resultados en tabla 'informe_cadastro'
+
+### Estructura de Datos
+- **Tabla documents**: Almacenamiento de metadatos de documentos
+- **Tabla informe_cadastro**: Resultados de análisis CrewAI
+- **Tabla checklist_config**: Configuración de checklist dinámico
+- **Bucket documents**: Almacenamiento de archivos en Supabase Storage
+
+### Formato de Output JSON
+```json
+{
+  "case_id": "card_id",
+  "status_geral": "Pendencia_Bloqueante|Pendencia_NaoBloqueante|Aprovado",
+  "risk_score": "Alto|Medio|Baixo",
+  "risk_score_numeric": 85,
+  "documentos_analisados": [...],
+  "pendencias": [...],
+  "checklist_validacao": {...},
+  "proximos_passos": [...],
+  "summary_report": "Resumo executivo para Pipefy",
+  "observacoes_gerais": "Análise detalhada adicional...",
+  "data_analise": "2025-01-XX",
+  "versao_checklist": "v1.0"
+}
+```
+
+## Configuración de Webhooks
+- **Pipefy**: Fase 338000020 → POST /webhook/pipefy (servicio ingestión v2)
+- **Supabase**: INSERT informe_cadastro → POST /webhook/supabase (servicio ingestión v2)
+
+## Integración con Proyecto Existente
+Las nuevas funcionalidades se integrarán con:
+- Servicios existentes: PipefyClient, DatabaseService, NotificationService
+- Integraciones existentes: TwilioClient, CNPJClient
+- Utilidades existentes: ErrorHandler
+- Documentación existente: API docs, guías de uso
+- Tests existentes: Suite de pruebas unitarias
+
+## Tecnologías y Dependencias
+- **FastAPI**: Para endpoints HTTP
+- **CrewAI**: Framework de agentes IA
+- **LlamaParse**: Procesamiento de documentos
+- **Supabase**: Base de datos y almacenamiento
+- **HTTPX**: Cliente HTTP asíncrono
+- **Pipefy GraphQL API**: Integración con Pipefy
+- **OpenAI API**: Modelo de IA para análisis
+
+## Criterios de Aceptación
+1. Webhook de Pipefy procesa correctamente documentos de la fase 338000020
+2. Documentos se almacenan correctamente en Supabase Storage y tabla documents
+3. Servicio CrewAI v2 recibe y procesa requests HTTP correctamente
+4. triagem_agente analiza documentos usando LlamaParse y base de conocimiento
+5. Resultados se almacenan en tabla informe_cadastro con formato JSON especificado
+6. Campo "Informe CrewAI" se actualiza automáticamente en Pipefy
+7. Manejo robusto de errores y timeouts
+8. Logging completo para debugging y monitoreo
+9. Integración sin conflictos con servicios existentes
+10. Documentación actualizada para nuevas funcionalidades
+
+## Consideraciones de Despliegue
+- Ambos servicios deben desplegarse en Render
+- Variables de entorno para comunicación entre servicios
+- Configuración de webhooks en Pipefy y Supabase
+- Manejo de cold starts en servicios de Render
+- Timeouts apropiados para procesamiento de documentos
+
+## Dependencias del Proyecto
+Esta implementación depende de las 12 tareas ya completadas del proyecto, especialmente:
+- Configuración de variables de entorno (Tarea 2)
+- Funcionalidades de Pipefy (Tareas 3-4)
+- Esquema de Supabase (Tarea 9)
+- Manejo de errores (Tarea 10)
+- Documentación existente (Tarea 12)
+
+Las nuevas tareas se construirán sobre esta base sólida ya establecida. 
